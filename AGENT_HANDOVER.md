@@ -256,16 +256,34 @@ Here is the exact progression of user requests, problems encountered, and soluti
   - **CORS & Health Check Probes**: Added `/health` probe endpoint (returns `HTTP 200 Healthy`) and `/` root redirect to `/swagger`. Enhanced CORS policy to dynamically accept requests from hosted frontends (Vercel/Render).
   - **Created Render Blueprint**: Added [render.yaml](file:///D:/paymenttracker-backend/render.yaml) for one-click Infrastructure-as-Code deployment.
 
+### Milestone 11: Production Database Migration to Supabase PostgreSQL
+- **User Request**: "supabase project id - hbstkhenoocozepiusmw, zone ap-southeast-2, password: Usman$887517. Use this as db now."
+- **Solution & Rationale**:
+  - Connected directly to Supabase PostgreSQL 17 on `db.hbstkhenoocozepiusmw.supabase.co:5432`.
+  - Exported complete DDL schema, relationships, indexes, and full dataset from local database, sanitized, and migrated cleanly to Supabase.
+  - All 7 tables (`Users`, `Sites`, `Categories`, `Labourers`, `PaymentRequests`, `PaymentAuditLogs`, `MeasurementBooks`) populated and verified on Supabase.
+  - Updated backend configuration in [appsettings.json](file:///D:/paymenttracker-backend/src/EnterprisePaymentSystem.Api/appsettings.json) and [render.yaml](file:///D:/paymenttracker-backend/render.yaml) with the Supabase connection string.
+  - Re-launched backend API daemon and verified live logins and queries against Supabase.
+
 ---
 
 ## 5. Current System State & Verified Credentials
 
 ### Active Running Services
-| Service | Address / Port | Working Directory |
-| :--- | :--- | :--- |
-| **Frontend (Vite Dev Server)** | `http://localhost:5173` | `D:\PaymentTracker-Frontend` |
-| **Backend API (ASP.NET Core)** | `http://localhost:5000` | `D:\paymenttracker-backend` |
-| **Database (PostgreSQL 17)** | `localhost:5432` (`kepayment_db`) | System Service |
+| Service | Address / Port | Working Directory | Database |
+| :--- | :--- | :--- | :--- |
+| **Frontend (Vite Dev Server)** | `http://localhost:5173` | `D:\PaymentTracker-Frontend` | — |
+| **Backend API (ASP.NET Core)** | `http://localhost:5000` | `D:\paymenttracker-backend` | **Supabase PostgreSQL** |
+| **Cloud Database (Supabase)** | `db.hbstkhenoocozepiusmw.supabase.co:5432` | Project `hbstkhenoocozepiusmw` | DB: `postgres`, User: `postgres` |
+
+### Supabase Connection Parameters
+- **Host**: `db.hbstkhenoocozepiusmw.supabase.co`
+- **Port**: `5432`
+- **Database**: `postgres`
+- **User**: `postgres`
+- **Password**: `Usman$887517`
+- **Region**: `ap-southeast-2` (Sydney / Asia-Pacific)
+- **Connection String**: `Host=db.hbstkhenoocozepiusmw.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=Usman$887517;SSL Mode=Require;Trust Server Certificate=true;`
 
 ### Seeded Users Available for Testing
 All users are active and use password: **`Password123!`**

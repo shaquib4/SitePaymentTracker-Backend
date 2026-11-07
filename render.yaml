@@ -16,9 +16,7 @@ services:
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
       - key: DATABASE_URL
-        fromDatabase:
-          name: kepayment-db
-          property: connectionString
+        value: "Host=db.hbstkhenoocozepiusmw.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=Usman$887517;SSL Mode=Require;Trust Server Certificate=true;"
       - key: Jwt__Key
         generateValue: true
       - key: Jwt__Issuer
@@ -27,11 +25,4 @@ services:
         value: EnterprisePaymentSystemClient
       - key: Database__UsePostgres
         value: "true"
-
-databases:
-  - name: kepayment-db
-    databaseName: kepayment_db
-    user: postgres
-    plan: free
-    region: oregon
 

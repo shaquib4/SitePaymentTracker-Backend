@@ -69,14 +69,14 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         modelBuilder.Entity<User>(b =>
         {
             b.HasKey(u => u.Id);
-            b.Property(u => u.Email).IsRequired().HasMaxLength(150);
+            b.Property(u => u.Email).IsRequired(false).HasMaxLength(150);
             b.Property(u => u.FullName).IsRequired().HasMaxLength(100);
             b.Property(u => u.PhoneNumber).IsRequired().HasMaxLength(20);
             b.Property(u => u.SixDigitUserId).IsRequired().HasMaxLength(6);
             b.Property(u => u.PasswordHash).IsRequired();
             b.Property(u => u.Department).HasMaxLength(100);
 
-            b.HasIndex(u => new { u.TenantId, u.Email }).IsUnique();
+            b.HasIndex(u => new { u.TenantId, u.Email }).IsUnique().HasFilter("\"Email\" IS NOT NULL");
             b.HasIndex(u => new { u.TenantId, u.SixDigitUserId }).IsUnique();
         });
 

@@ -8,7 +8,7 @@ public record LoginResponse(
     string Token,
     Guid UserId,
     string FullName,
-    string Email,
+    string? Email,
     string Role,
     Guid TenantId,
     string TenantName
@@ -16,7 +16,7 @@ public record LoginResponse(
 
 public record UserDto(
     Guid Id,
-    string Email,
+    string? Email,
     string FullName,
     UserRole Role,
     string Department,

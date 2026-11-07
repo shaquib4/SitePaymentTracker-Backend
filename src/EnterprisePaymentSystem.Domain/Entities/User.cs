@@ -8,7 +8,7 @@ public class User
     public Guid TenantId { get; set; }
     public Tenant? Tenant { get; set; }
 
-    public string Email { get; set; } = string.Empty;
+    public string? Email { get; set; }
     public string FullName { get; set; } = string.Empty;
 
     // Mandatory Phone Number for Admin to click-to-call and verify expenses

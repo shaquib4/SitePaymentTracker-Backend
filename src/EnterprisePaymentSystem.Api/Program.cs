@@ -58,10 +58,32 @@ try
     builder.Host.UseSerilog();
 
     // ==============================================================================
-    // 2. EXPLICIT DATABASE CONTEXT CONFIGURATION
+    // 2. EXPLICIT DATABASE CONTEXT CONFIGURATION (Supports Local & Render Cloud DB)
     // ==============================================================================
-    var pgConnection = builder.Configuration.GetConnectionString("PostgreSqlConnection")
-                       ?? builder.Configuration.GetConnectionString("DefaultConnection");
+    static string ParsePostgresUrl(string connectionStringOrUrl)
+    {
+        if (connectionStringOrUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
+            connectionStringOrUrl.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+        {
+            var uri = new Uri(connectionStringOrUrl);
+            var userInfo = uri.UserInfo.Split(':');
+            var username = userInfo[0];
+            var password = userInfo.Length > 1 ? userInfo[1] : "";
+            var database = uri.AbsolutePath.TrimStart('/');
+            var port = uri.Port > 0 ? uri.Port : 5432;
+
+            return $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Prefer;Trust Server Certificate=true;";
+        }
+        return connectionStringOrUrl;
+    }
+
+    var pgConnectionRaw = builder.Configuration.GetConnectionString("PostgreSqlConnection")
+                          ?? builder.Configuration.GetConnectionString("DefaultConnection")
+                          ?? Environment.GetEnvironmentVariable("DATABASE_URL");
+
+    var pgConnection = !string.IsNullOrWhiteSpace(pgConnectionRaw)
+        ? ParsePostgresUrl(pgConnectionRaw)
+        : null;
 
     var usePostgres = builder.Configuration.GetValue<bool>("Database:UsePostgres")
                       || (!string.IsNullOrWhiteSpace(pgConnection) && pgConnection.Contains("Host="));
@@ -181,10 +203,21 @@ try
     {
         options.AddPolicy("AllowFrontend", policy =>
         {
-            policy.WithOrigins("http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173")
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials();
+            var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+            if (configuredOrigins != null && configuredOrigins.Length > 0)
+            {
+                policy.WithOrigins(configuredOrigins)
+                      .AllowAnyHeader()
+                      .AllowAnyMethod()
+                      .AllowCredentials();
+            }
+            else
+            {
+                policy.SetIsOriginAllowed(_ => true)
+                      .AllowAnyHeader()
+                      .AllowAnyMethod()
+                      .AllowCredentials();
+            }
         });
     });
 
@@ -268,6 +301,16 @@ try
     app.UseAuthorization();
 
     app.MapControllers().RequireRateLimiting("fixed-ip-policy");
+
+    // Cloud Health Probe & Root Redirect
+    app.MapGet("/", () => Results.Redirect("/swagger"));
+    app.MapGet("/health", () => Results.Ok(new
+    {
+        status = "Healthy",
+        service = "KE Payment Tracker Backend API",
+        version = "1.0.0",
+        timestamp = DateTime.UtcNow
+    }));
 
     // Multi-Tenant Seeding on Bootstrap
     using (var scope = app.Services.CreateScope())

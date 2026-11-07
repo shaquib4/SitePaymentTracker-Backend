@@ -235,40 +235,51 @@ Here is the exact progression of user requests, problems encountered, and soluti
     - Password: `Password123!` (BCrypt `$2a$11$ooRMTtAZRiOqLjebkXH9Du5zXm.nJzic3UDSHKWyW/0QxhQ.ceGfC`)
     - Tenant: `BuildCon Infra Ltd` (`11111111-1111-1111-1111-111111111111`)
 
-### Milestone 8: Multi-Identifier Login Bug Fix & Supervisor Reactivation
-- **User Request**: "Not able to login after creating supervisor user through newly created user credentials; give db details for DBeaver; create .gitignore files."
-- **Root Causes Discovered**:
-  1. The user was deactivated (`IsActive = false`) because the old `Deactivate` endpoint unconditionally set `IsActive = false`.
-  2. The frontend login form had `<input type="email">`, which browser HTML5 validation rejected when users typed 6-digit User IDs like `616244`.
+### Milestone 9: Optional Email for Employees, Admin Self-Exclusion & Database Mock Data
+- **User Request**: "Add mock data in all tables (expenses from supervisor, accountant, labour, vendor); make email optional for all employees except admin; admin should not see himself in employees list; all mock directly in DB."
 - **Solution & Rationale**:
-  - Updated [LoginPage.tsx](file:///D:/KEPaymentTracker/frontend/src/components/LoginPage.tsx) to `<input type="text">` with placeholder `"name@company.com or 6-digit ID (e.g. 749201)"`.
-  - Changed `Deactivate(Guid id)` in [UsersController.cs](file:///D:/KEPaymentTracker/backend/src/EnterprisePaymentSystem.Api/Controllers/UsersController.cs) to toggle `user.IsActive = !user.IsActive`.
-  - Set all active users to `IsActive = true` in PostgreSQL.
-  - Synchronized supervisor test passwords (`Suredra` `616244` and `Suresh` `349104`) to `Password123!`.
-  - Provided exact DBeaver connection parameters.
-  - Created `.gitignore` in root, backend, and frontend. Cleaned repository tracking.
+  - **Optional Email**: Altered PostgreSQL column `"Users"."Email"` to drop `NOT NULL` constraint and created partial unique index `WHERE "Email" IS NOT NULL`. Made `User.Email` nullable in entity, DTOs, and controller. Only `Admin` role requires email; other roles (Supervisor, Accountant, Vendor) can log in solely using their generated **6-digit User ID** and password.
+  - **Admin Self-Exclusion**: Filtered `GetUsers` in backend (`u.Id != currentUserId`) and `AdminDashboard.tsx` (`u.id !== currentUser.userId`) so logged-in Admin accounts are excluded from the Employee Roster.
+  - **Complete Mock Data Seeded**: Created and ran `populate_mock_data.sql`:
+    - 3 Sites: Metro Phase 4, Skyline Heights, Expressway Bridge.
+    - 6 Users covering all roles (Accountant Ramesh Sharma and Supervisor Amit Patel with null emails).
+    - 5 Labourers with registered daily wage rates assigned to sites and supervisors.
+    - 8 PaymentRequests (Labour wages, Diesel & Fuel, Crane rental, Accountant salary retainer, Vendor cement, and 2 quarantined Pending requests).
+    - 8 PaymentAuditLogs and 2 MeasurementBooks.
+
+### Milestone 10: Docker Containerization & Render Cloud Deployment
+- **User Request**: "Create a docker file for backend so that it can be easily deployed on render."
+- **Solution & Rationale**:
+  - **Multi-Stage Dockerfile**: Created [Dockerfile](file:///D:/paymenttracker-backend/Dockerfile) with .NET 10 SDK (`mcr.microsoft.com/dotnet/sdk:10.0`) for layer-cached building and minimal ASP.NET Core 10 runtime (`mcr.microsoft.com/dotnet/aspnet:10.0`).
+  - **Dynamic Port Binding for Render**: Wrapped entrypoint with `sh -c "dotnet EnterprisePaymentSystem.Api.dll --urls http://0.0.0.0:${PORT:-8080}"` so Render's dynamic `$PORT` environment variable is automatically honored.
+  - **Cloud Database Compatibility**: Enhanced `Program.cs` with `ParsePostgresUrl` to transparently parse Render's URI-formatted `DATABASE_URL` (`postgres://user:pass@host:5432/db`) into Npgsql connection parameters.
+  - **CORS & Health Check Probes**: Added `/health` probe endpoint (returns `HTTP 200 Healthy`) and `/` root redirect to `/swagger`. Enhanced CORS policy to dynamically accept requests from hosted frontends (Vercel/Render).
+  - **Created Render Blueprint**: Added [render.yaml](file:///D:/paymenttracker-backend/render.yaml) for one-click Infrastructure-as-Code deployment.
 
 ---
 
 ## 5. Current System State & Verified Credentials
 
 ### Active Running Services
-| Service | Address / Port | Background Task ID |
+| Service | Address / Port | Working Directory |
 | :--- | :--- | :--- |
-| **Frontend (Vite Dev Server)** | `http://localhost:5173` | `task-1091` |
-| **Backend API (ASP.NET Core)** | `http://localhost:5000` | `task-2462` |
+| **Frontend (Vite Dev Server)** | `http://localhost:5173` | `D:\PaymentTracker-Frontend` |
+| **Backend API (ASP.NET Core)** | `http://localhost:5000` | `D:\paymenttracker-backend` |
 | **Database (PostgreSQL 17)** | `localhost:5432` (`kepayment_db`) | System Service |
 
 ### Seeded Users Available for Testing
-All users are active and use the password: **`Password123!`**
+All users are active and use password: **`Password123!`**
 
-| Full Name | Role | Email | 6-Digit ID | Password |
+| Full Name | Role | Email | 6-Digit ID | Login Identifier |
 | :--- | :--- | :--- | :--- | :--- |
-| **Shaquib Khan** | **Admin** | `khanshaquib21@gmail.com` | `749201` | `Password123!` |
-| **Suredra** | **Supervisor** | `xyz@gmail.com` | `616244` | `Password123!` |
-| **Suresh** | **Supervisor** | `xyyz@gmail.com` | `349104` | `Password123!` |
+| **Shaquib Khan** | **Admin** | `khanshaquib21@gmail.com` | `749201` | Email or ID `749201` |
+| **Ramesh Sharma** | **Accountant** | *None (Optional)* | `521402` | 6-Digit ID `521402` |
+| **Suredra** | **Supervisor** | `xyz@gmail.com` | `616244` | Email or ID `616244` |
+| **Suresh** | **Supervisor** | `xyyz@gmail.com` | `349104` | Email or ID `349104` |
+| **Amit Patel** | **Supervisor** | *None (Optional)* | `839201` | 6-Digit ID `839201` |
+| **Apex Steel & Cement Suppliers** | **Vendor** | `orders@apexsupplies.in` | `918234` | Email or ID `918234` |
 
-*Note: You can log into the web app using either the email or the 6-digit User ID in the first input box.*
+*Note: You can log into the web app using either the email (if configured) or the 6-digit User ID in the login input box.*
 
 ---
 
@@ -277,7 +288,26 @@ All users are active and use the password: **`Password123!`**
 ### 6.1 Backend (.NET 10)
 ```powershell
 # Navigate to backend directory
-cd D:\KEPaymentTracker\backend
+cd D:\paymenttracker-backend
+
+# Build solution
+dotnet build EnterprisePaymentSystem.slnx
+
+# Run API Server (bound to http://localhost:5000)
+dotnet run --project src\EnterprisePaymentSystem.Api\EnterprisePaymentSystem.Api.csproj
+```
+
+### 6.2 Frontend (React / Vite)
+```powershell
+# Navigate to frontend directory
+cd D:\PaymentTracker-Frontend
+
+# Install dependencies (if fresh clone)
+npm install
+
+# Start Vite dev server (bound to http://localhost:5173)
+npm run dev -- --host 0.0.0.0
+```
 
 # Build solution
 dotnet build EnterprisePaymentSystem.slnx

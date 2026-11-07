@@ -1,0 +1,12 @@
+**/.git
+**/.vs
+**/bin
+**/obj
+**/*.user
+**/*.suo
+**/logs
+**/Logs
+Dockerfile*
+.dockerignore
+populate_mock_data.sql
+

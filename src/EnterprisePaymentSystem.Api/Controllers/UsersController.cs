@@ -28,7 +28,7 @@ public class UsersController : ControllerBase
 
     public record GenerateUserRequest(
         string FullName,
-        string Email,
+        string? Email,
         string PhoneNumber,
         UserRole Role,
         string Department
@@ -37,7 +37,7 @@ public class UsersController : ControllerBase
     public record GeneratedUserResponse(
         Guid Id,
         string FullName,
-        string Email,
+        string? Email,
         string PhoneNumber,
         string SixDigitUserId,
         string TemporaryPassword,
@@ -48,7 +48,7 @@ public class UsersController : ControllerBase
     public record UserHistoryResponse(
         Guid UserId,
         string FullName,
-        string Email,
+        string? Email,
         string PhoneNumber,
         string SixDigitUserId,
         UserRole Role,
@@ -82,7 +82,16 @@ public class UsersController : ControllerBase
     [Authorize(Roles = "Admin,Accountant")]
     public async Task<ActionResult<IEnumerable<object>>> GetUsers(CancellationToken ct)
     {
-        var users = await _context.Users
+        var currentUserId = _currentUserService.UserId;
+        var query = _context.Users.AsQueryable();
+
+        // Admin should not see himself in the employees list
+        if (currentUserId.HasValue)
+        {
+            query = query.Where(u => u.Id != currentUserId.Value);
+        }
+
+        var users = await query
             .OrderBy(u => u.FullName)
             .Select(u => new
             {
@@ -104,6 +113,7 @@ public class UsersController : ControllerBase
     /// <summary>
     /// Admin generates a new employee with a 6-digit ID and temporary password.
     /// Admin can copy credentials to WhatsApp/SMS.
+    /// Email is optional for non-Admin employees (Supervisor, Accountant, Vendor).
     /// </summary>
     [HttpPost("generate")]
     [Authorize(Roles = "Admin")]
@@ -123,6 +133,35 @@ public class UsersController : ControllerBase
             });
         }
 
+        if (request.Role == UserRole.Admin && string.IsNullOrWhiteSpace(request.Email))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Validation Error",
+                Detail = "Email is mandatory for Admin accounts.",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
+        string? normalizedEmail = string.IsNullOrWhiteSpace(request.Email)
+            ? null
+            : request.Email.Trim().ToLowerInvariant();
+
+        if (normalizedEmail != null)
+        {
+            var exists = await _context.Users.IgnoreQueryFilters()
+                .AnyAsync(u => u.TenantId == tenantId && u.Email == normalizedEmail, ct);
+            if (exists)
+            {
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "Validation Error",
+                    Detail = "A user with this email address already exists.",
+                    Status = StatusCodes.Status400BadRequest
+                });
+            }
+        }
+
         // Generate a random 6-digit User ID (e.g., 592314)
         var random = new Random();
         string sixDigitId;
@@ -139,7 +178,7 @@ public class UsersController : ControllerBase
         {
             TenantId = tenantId,
             FullName = request.FullName.Trim(),
-            Email = request.Email.Trim().ToLowerInvariant(),
+            Email = normalizedEmail,
             PhoneNumber = request.PhoneNumber.Trim(),
             SixDigitUserId = sixDigitId,
             Role = request.Role,

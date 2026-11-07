@@ -21,7 +21,7 @@ public class UserRepository : IUserRepository
             .IgnoreQueryFilters()
             .Include(u => u.Tenant)
             .FirstOrDefaultAsync(u => 
-                u.Email.ToLower() == cleanInput || 
+                (u.Email != null && u.Email.ToLower() == cleanInput) || 
                 u.SixDigitUserId == email.Trim() || 
                 u.FullName.ToLower() == cleanInput ||
                 u.FullName.ToLower().Replace(" ", "") == cleanInput, ct);

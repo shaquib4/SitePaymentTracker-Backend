@@ -256,14 +256,19 @@ Here is the exact progression of user requests, problems encountered, and soluti
   - **CORS & Health Check Probes**: Added `/health` probe endpoint (returns `HTTP 200 Healthy`) and `/` root redirect to `/swagger`. Enhanced CORS policy to dynamically accept requests from hosted frontends (Vercel/Render).
   - **Created Render Blueprint**: Added [render.yaml](file:///D:/paymenttracker-backend/render.yaml) for one-click Infrastructure-as-Code deployment.
 
-### Milestone 11: Production Database Migration to Supabase PostgreSQL
+### Milestone 11: Production Database Migration to Supabase PostgreSQL & Render IPv4 Pooler Fix
 - **User Request**: "supabase project id - hbstkhenoocozepiusmw, zone ap-southeast-2, password: Usman$887517. Use this as db now."
+- **Issue Discovered on Render**:
+  - `Npgsql.NpgsqlException: Failed to connect to [2406:da1c:4c7:f800::3ed8]:5432 -> SocketException (101): Network is unreachable`
+  - **Root Cause**: Render containers operate on IPv4-only networks and cannot route to Supabase's direct database hostname (`db.<project>.supabase.co`), which resolves to IPv6.
 - **Solution & Rationale**:
-  - Connected directly to Supabase PostgreSQL 17 on `db.hbstkhenoocozepiusmw.supabase.co:5432`.
-  - Exported complete DDL schema, relationships, indexes, and full dataset from local database, sanitized, and migrated cleanly to Supabase.
-  - All 7 tables (`Users`, `Sites`, `Categories`, `Labourers`, `PaymentRequests`, `PaymentAuditLogs`, `MeasurementBooks`) populated and verified on Supabase.
-  - Updated backend configuration in [appsettings.json](file:///D:/paymenttracker-backend/src/EnterprisePaymentSystem.Api/appsettings.json) and [render.yaml](file:///D:/paymenttracker-backend/render.yaml) with the Supabase connection string.
-  - Re-launched backend API daemon and verified live logins and queries against Supabase.
+  - **Migrated to Supabase IPv4 Pooler**: Configured the backend to connect via Supabase's IPv4 Connection Pooler (Supavisor):
+    - **Host**: `aws-0-ap-southeast-2.pooler.supabase.com`
+    - **Port**: `5432` (Session mode, optimal for EF Core)
+    - **Username**: `postgres.hbstkhenoocozepiusmw`
+    - **Database**: `postgres`
+  - **Automatic Cloud Normalizer in `Program.cs`**: Implemented `NormalizeSupabaseConnectionString` using `NpgsqlConnectionStringBuilder`. If `db.<project>.supabase.co` or a `postgresql://` URI is passed in `DATABASE_URL` on Render, the backend automatically rewrites it to use the IPv4 pooler and appends the project ref to the username.
+  - Verified live: Migrated all 7 tables and 8 payments to Supabase, verified login and health probes over IPv4.
 
 ---
 

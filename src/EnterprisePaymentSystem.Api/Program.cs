@@ -60,21 +60,53 @@ try
     // ==============================================================================
     // 2. EXPLICIT DATABASE CONTEXT CONFIGURATION (Supports Local & Render Cloud DB)
     // ==============================================================================
-    static string ParsePostgresUrl(string connectionStringOrUrl)
+    static string NormalizeSupabaseConnectionString(string connectionStringOrUrl)
     {
-        if (connectionStringOrUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
-            connectionStringOrUrl.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+        string cs = connectionStringOrUrl.Trim();
+
+        if (cs.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
+            cs.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
         {
-            var uri = new Uri(connectionStringOrUrl);
+            var uri = new Uri(cs);
             var userInfo = uri.UserInfo.Split(':');
-            var username = userInfo[0];
-            var password = userInfo.Length > 1 ? userInfo[1] : "";
+            var username = Uri.UnescapeDataString(userInfo[0]);
+            var password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : "";
             var database = uri.AbsolutePath.TrimStart('/');
             var port = uri.Port > 0 ? uri.Port : 5432;
 
-            return $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Prefer;Trust Server Certificate=true;";
+            cs = $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
         }
-        return connectionStringOrUrl;
+
+        try
+        {
+            var csBuilder = new Npgsql.NpgsqlConnectionStringBuilder(cs);
+
+            // Render IPv6 Fix: Supabase direct hosts (db.<project>.supabase.co) only route via IPv6,
+            // which fails on Render free containers with "Network is unreachable (101)".
+            // Route through Supabase IPv4 Pooler (aws-0-ap-southeast-2.pooler.supabase.com).
+            if (!string.IsNullOrEmpty(csBuilder.Host) &&
+                csBuilder.Host.StartsWith("db.", StringComparison.OrdinalIgnoreCase) &&
+                csBuilder.Host.EndsWith(".supabase.co", StringComparison.OrdinalIgnoreCase))
+            {
+                var projectRef = csBuilder.Host.Substring(3, csBuilder.Host.IndexOf(".supabase.co", StringComparison.OrdinalIgnoreCase) - 3);
+                csBuilder.Host = "aws-0-ap-southeast-2.pooler.supabase.com";
+                csBuilder.Port = 5432;
+
+                if (!string.IsNullOrEmpty(csBuilder.Username) && !csBuilder.Username.Contains('.'))
+                {
+                    csBuilder.Username = $"{csBuilder.Username}.{projectRef}";
+                }
+
+                csBuilder.SslMode = Npgsql.SslMode.Require;
+                return csBuilder.ConnectionString;
+            }
+
+            return csBuilder.ConnectionString;
+        }
+        catch
+        {
+            return cs;
+        }
     }
 
     var pgConnectionRaw = builder.Configuration.GetConnectionString("PostgreSqlConnection")
@@ -82,7 +114,7 @@ try
                           ?? Environment.GetEnvironmentVariable("DATABASE_URL");
 
     var pgConnection = !string.IsNullOrWhiteSpace(pgConnectionRaw)
-        ? ParsePostgresUrl(pgConnectionRaw)
+        ? NormalizeSupabaseConnectionString(pgConnectionRaw)
         : null;
 
     var usePostgres = builder.Configuration.GetValue<bool>("Database:UsePostgres")

@@ -23,7 +23,10 @@ public class ReportsController : ControllerBase
         _queue = queue;
         _currentUserService = currentUserService;
         _validator = validator;
-        _storageDirectory = Path.Combine(AppContext.BaseDirectory, "Storage", "Reports");
+        var defaultDir = Path.Combine(AppContext.BaseDirectory, "Storage", "Reports");
+        _storageDirectory = Directory.Exists(defaultDir)
+            ? defaultDir
+            : Path.Combine(Path.GetTempPath(), "Storage", "Reports");
     }
 
     /// <summary>

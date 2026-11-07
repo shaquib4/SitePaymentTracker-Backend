@@ -23,10 +23,22 @@ public class ExportBackgroundWorker : BackgroundService
         _serviceProvider = serviceProvider;
         _logger = logger;
 
-        _storageDirectory = Path.Combine(AppContext.BaseDirectory, "Storage", "Reports");
-        if (!Directory.Exists(_storageDirectory))
+        try
         {
-            Directory.CreateDirectory(_storageDirectory);
+            _storageDirectory = Path.Combine(AppContext.BaseDirectory, "Storage", "Reports");
+            if (!Directory.Exists(_storageDirectory))
+            {
+                Directory.CreateDirectory(_storageDirectory);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Storage directory could not be created in AppContext.BaseDirectory. Falling back to temporary directory.");
+            _storageDirectory = Path.Combine(Path.GetTempPath(), "Storage", "Reports");
+            if (!Directory.Exists(_storageDirectory))
+            {
+                Directory.CreateDirectory(_storageDirectory);
+            }
         }
     }
 

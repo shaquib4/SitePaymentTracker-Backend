@@ -24,6 +24,20 @@ using Serilog.Formatting.Json;
 // ==============================================================================
 // 1. EARLY BOOTSTRAP LOGGING WITH SERILOG (FLUENT CONFIGURATION API)
 // ==============================================================================
+string logPath;
+try
+{
+    var baseLogDir = Path.Combine(AppContext.BaseDirectory, "Logs");
+    Directory.CreateDirectory(baseLogDir);
+    logPath = Path.Combine(baseLogDir, "app-.json");
+}
+catch
+{
+    var tempLogDir = Path.Combine(Path.GetTempPath(), "Logs");
+    Directory.CreateDirectory(tempLogDir);
+    logPath = Path.Combine(tempLogDir, "app-.json");
+}
+
 Log.Logger = new LoggerConfiguration()
     // Noise Reduction: Global Information level, suppress ASP.NET Core & EF Core spam
     .MinimumLevel.Information()
@@ -34,7 +48,7 @@ Log.Logger = new LoggerConfiguration()
     // Local File Sink (Auto-Cleanup): Asynchronous, JSON format, hourly roll, 10MB limit, 12h retention
     .WriteTo.Async(a => a.File(
         formatter: new JsonFormatter(),
-        path: Path.Combine(AppContext.BaseDirectory, "Logs", "app-.json"),
+        path: logPath,
         rollingInterval: RollingInterval.Hour,
         fileSizeLimitBytes: 10 * 1024 * 1024, // 10 MB per file limit
         rollOnFileSizeLimit: true,

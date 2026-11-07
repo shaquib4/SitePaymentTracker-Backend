@@ -270,6 +270,18 @@ Here is the exact progression of user requests, problems encountered, and soluti
   - **Automatic Cloud Normalizer in `Program.cs`**: Implemented `NormalizeSupabaseConnectionString` using `NpgsqlConnectionStringBuilder`. If `db.<project>.supabase.co` or a `postgresql://` URI is passed in `DATABASE_URL` on Render, the backend automatically rewrites it to use the IPv4 pooler and appends the project ref to the username.
   - Verified live: Migrated all 7 tables and 8 payments to Supabase, verified login and health probes over IPv4.
 
+### Milestone 12: Linux Non-Root Storage Permission Fix
+- **Issue Discovered on Render**:
+  - `System.UnauthorizedAccessException: Access to the path '/app/Storage' is denied. ---> System.IO.IOException: Permission denied`
+  - **Root Cause**: The Docker container runs as non-root user `app` (`USER $APP_UID`). By default, files copied into `/app` are owned by `root:root`, meaning `app` has no write permissions to create new folders (`/app/Storage`, `/app/Logs`) inside `/app`.
+- **Solution & Rationale**:
+  - **In Dockerfile**:
+    - Pre-created `/app/Storage/Reports` and `/app/Logs`.
+    - Executed `chown -R $APP_UID:$APP_UID /app` and `chmod -R 775 /app/Storage /app/Logs`.
+    - Added `--chown=$APP_UID:$APP_UID` to `COPY --from=build`.
+  - **In C# Code**:
+    - Added graceful try/catch fallbacks in `ExportBackgroundWorker.cs`, `ReportsController.cs`, and `Program.cs` (Serilog). If `/app/Storage` or `/app/Logs` cannot be created, the app automatically falls back to `Path.GetTempPath()` (`/tmp`), preventing host startup crashes.
+
 ---
 
 ## 5. Current System State & Verified Credentials

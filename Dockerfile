@@ -31,11 +31,16 @@ RUN dotnet publish EnterprisePaymentSystem.Api.csproj -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
+# Copy compiled artifacts from build stage with non-root user ownership
+COPY --from=build --chown=$APP_UID:$APP_UID /app/publish .
+
+# Pre-create writable runtime directories (Storage, Reports, Logs) and assign ownership to app user
+RUN mkdir -p /app/Storage/Reports /app/Logs && \
+    chown -R $APP_UID:$APP_UID /app && \
+    chmod -R 775 /app/Storage /app/Logs
+
 # Ensure non-root security container environment
 USER $APP_UID
-
-# Copy compiled artifacts from build stage
-COPY --from=build /app/publish .
 
 # Environment Configuration for Cloud SaaS (Render / AWS / Railway)
 ENV ASPNETCORE_ENVIRONMENT=Production \

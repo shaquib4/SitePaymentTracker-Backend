@@ -1,0 +1,84 @@
+## =====================================
+## .NET / C# Build Artifacts & Binaries
+## =====================================
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+*.log
+TestResults/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.ionide/
+
+## =====================================
+## Database & Local Storage Files
+## =====================================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bak
+*.mdf
+*.ldf
+admin_hash.txt
+reset_database.sql
+scratch/
+
+## =====================================
+## Node / Frontend (React + Vite + TS)
+## =====================================
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+build/
+frontend/build/
+.vite/
+.vite-temp/
+*.timestamp-*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+## =====================================
+## Environment Variables & Local Secrets
+## =====================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+appsettings.Development.json
+appsettings.Local.json
+
+## =====================================
+## Operating System & Temporary Files
+## =====================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+*~
+*.swp
+*.swo
+.idea/
+*.sublime-project
+*.sublime-workspace
+

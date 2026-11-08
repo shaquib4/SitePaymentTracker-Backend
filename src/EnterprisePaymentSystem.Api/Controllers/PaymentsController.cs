@@ -178,7 +178,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/mark-paid")]
-    [Authorize(Roles = "Admin,Accountant")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<PaymentResponseDto>> MarkPaid(
         Guid id,
         [FromBody] MarkPaidRequest request,

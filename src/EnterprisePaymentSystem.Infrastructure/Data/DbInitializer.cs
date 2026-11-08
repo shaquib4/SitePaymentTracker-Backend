@@ -24,18 +24,136 @@ public static class DbInitializer
 
         if (await context.Tenants.IgnoreQueryFilters().AnyAsync())
         {
+            // Ensure OfficeWorker user exists in Khan Enterprises even if already seeded
+            var hasOfficeWorker = await context.Users.IgnoreQueryFilters().AnyAsync(u => u.Role == UserRole.OfficeWorker);
+            if (!hasOfficeWorker)
+            {
+                var tenant = await context.Tenants.IgnoreQueryFilters().FirstOrDefaultAsync(t => t.Name == "Khan Enterprises")
+                             ?? await context.Tenants.IgnoreQueryFilters().FirstOrDefaultAsync();
+                if (tenant != null)
+                {
+                    var pwdHash = hasher.HashPassword("Password123!");
+                    var officeWorker = new User
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        Email = "officeworker@khanenterprises.com",
+                        FullName = "Neha Sharma",
+                        PhoneNumber = "+919877001122",
+                        SixDigitUserId = "400004",
+                        Role = UserRole.OfficeWorker,
+                        Department = "Administration & Support",
+                        PasswordHash = pwdHash,
+                        IsActive = true,
+                        CreatedAtUtc = DateTime.UtcNow.AddMonths(-6)
+                    };
+                    context.Users.Add(officeWorker);
+
+                    var p1 = new PaymentRequest
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        UserId = officeWorker.Id,
+                        Category = "Office Supplies & IT",
+                        Title = "Stationery, Printer Toners & Office Paper",
+                        Description = "Monthly administrative supplies for head office",
+                        Amount = 14500.00m,
+                        Currency = "INR",
+                        ExpenseYear = 2026,
+                        StartDate = new DateOnly(2026, 1, 5),
+                        EndDate = new DateOnly(2026, 1, 20),
+                        Status = PaymentStatus.Approved,
+                        ApprovalComments = "Approved against GST invoice",
+                        CreatedAtUtc = new DateTime(2026, 1, 21, 10, 0, 0, DateTimeKind.Utc),
+                        Version = 2
+                    };
+                    p1.AuditLogs.Add(new PaymentAuditLog
+                    {
+                        TenantId = tenant.Id,
+                        PaymentRequestId = p1.Id,
+                        Action = "Approved",
+                        NewStatus = PaymentStatus.Approved,
+                        PerformedByUserId = AcmeAdminId,
+                        PerformedByUserName = "Shaquib Khan",
+                        Comments = "Approved by Executive Management."
+                    });
+
+                    var p2 = new PaymentRequest
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        UserId = officeWorker.Id,
+                        Category = "Travel & Client Meeting",
+                        Title = "Client Coordination & Site Travel Reimbursement",
+                        Description = "Cab and fuel allowance for Gurugram Pier 14 inspection visit",
+                        Amount = 6800.00m,
+                        Currency = "INR",
+                        ExpenseYear = 2026,
+                        StartDate = new DateOnly(2026, 2, 2),
+                        EndDate = new DateOnly(2026, 2, 10),
+                        Status = PaymentStatus.Pending,
+                        CreatedAtUtc = new DateTime(2026, 2, 11, 14, 0, 0, DateTimeKind.Utc),
+                        Version = 1
+                    };
+                    p2.AuditLogs.Add(new PaymentAuditLog
+                    {
+                        TenantId = tenant.Id,
+                        PaymentRequestId = p2.Id,
+                        Action = "SubmittedForApproval",
+                        NewStatus = PaymentStatus.Pending,
+                        PerformedByUserId = officeWorker.Id,
+                        PerformedByUserName = "Neha Sharma",
+                        Comments = "Submitted travel expense claim."
+                    });
+
+                    // Historical (2025) payment request to test past year / historical filtering
+                    var p3 = new PaymentRequest
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        UserId = officeWorker.Id,
+                        Category = "Office Utilities",
+                        Title = "Annual High-Speed Broadband & Cloud Telephony",
+                        Description = "FY 2025 Office Internet & VoIP line setup",
+                        Amount = 24000.00m,
+                        Currency = "INR",
+                        ExpenseYear = 2025,
+                        StartDate = new DateOnly(2025, 4, 1),
+                        EndDate = new DateOnly(2025, 4, 30),
+                        Status = PaymentStatus.Completed,
+                        ApprovalComments = "Paid via corporate banking",
+                        CreatedAtUtc = new DateTime(2025, 5, 2, 11, 0, 0, DateTimeKind.Utc),
+                        Version = 3
+                    };
+                    p3.AuditLogs.Add(new PaymentAuditLog
+                    {
+                        TenantId = tenant.Id,
+                        PaymentRequestId = p3.Id,
+                        Action = "Completed",
+                        NewStatus = PaymentStatus.Completed,
+                        PerformedByUserId = AcmeAdminId,
+                        PerformedByUserName = "Shaquib Khan",
+                        Comments = "Paid via bank transfer."
+                    });
+
+                    context.PaymentRequests.AddRange(p1, p2, p3);
+                    await context.SaveChangesAsync();
+                    logger.LogInformation("Seeded OfficeWorker user Neha Sharma (ID: 400004) with current and historical payment records.");
+                }
+            }
+
             logger.LogInformation("Database already seeded. Skipping initial data seed.");
             return;
         }
 
         logger.LogInformation("Seeding Construction Multi-Tenant system with Admin, Accountant, Supervisor roles, dynamic categories & sites...");
 
-        // 1. Tenants (Flat ₹30k/yr construction firm)
+        // 1. Tenants (Construction enterprise)
         var acmeTenant = new Tenant
         {
             Id = AcmeTenantId,
-            Name = "BuildCon Infra Ltd",
-            SubscriptionPlan = "Flat-30k-Yr",
+            Name = "Khan Enterprises",
+            SubscriptionPlan = "Enterprise Unlimited",
             Currency = "INR",
             IsActive = true,
             CreatedAtUtc = DateTime.UtcNow.AddMonths(-6)
@@ -45,7 +163,7 @@ public static class DbInitializer
         {
             Id = GlobexTenantId,
             Name = "Apex Builders & Contractors",
-            SubscriptionPlan = "Flat-30k-Yr",
+            SubscriptionPlan = "Enterprise Unlimited",
             Currency = "INR",
             IsActive = true,
             CreatedAtUtc = DateTime.UtcNow.AddMonths(-4)

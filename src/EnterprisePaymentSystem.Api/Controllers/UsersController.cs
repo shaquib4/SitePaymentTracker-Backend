@@ -228,17 +228,27 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// Admin deep-dive history: Lifetime aggregate profile of employee.
-    /// Total Approved (₹), Total Pending (₹), and all historical requests.
+    /// User history: Lifetime aggregate profile of employee.
+    /// Admin can view any user; Employees/OfficeWorkers can strictly view their own profile.
+    /// Total Approved (₹), Total Pending (₹), and all historical requests with period filter.
     /// </summary>
     [HttpGet("{id:guid}/history")]
-    [Authorize(Roles = "Admin")]
+    [Authorize]
     public async Task<ActionResult<UserHistoryResponse>> GetUserHistory(
         Guid id,
         [FromQuery] DateOnly? startDate = null,
         [FromQuery] DateOnly? endDate = null,
         CancellationToken ct = default)
     {
+        var currentUserId = _currentUserService.UserId;
+        var currentRole = _currentUserService.Role;
+
+        // Admin can view any user's history; non-admins can strictly only view their own history!
+        if (currentRole != nameof(UserRole.Admin) && currentUserId != id)
+        {
+            return Forbid();
+        }
+
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user == null) return NotFound();
 

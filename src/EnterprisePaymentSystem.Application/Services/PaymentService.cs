@@ -230,9 +230,9 @@ public class PaymentService : IPaymentService
             }
         }
 
-        // Supervisor restriction: only see payments submitted by themselves
+        // Supervisor or OfficeWorker restriction: strictly only see payments submitted by themselves
         Guid? userFilter = null;
-        if (userRole == nameof(UserRole.Supervisor) && _currentUserService.UserId.HasValue)
+        if ((userRole == nameof(UserRole.Supervisor) || userRole == nameof(UserRole.OfficeWorker) || userRole == "OfficeWorker") && _currentUserService.UserId.HasValue)
         {
             userFilter = _currentUserService.UserId.Value;
         }

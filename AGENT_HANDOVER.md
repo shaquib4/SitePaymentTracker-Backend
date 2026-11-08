@@ -1,6 +1,6 @@
 # KEPaymentTracker — Comprehensive System & Agent Handover Document
 
-> **Document Version:** 3.1  
+> **Document Version:** 3.3  
 > **Last Updated:** November 2026  
 > **Company / Tenant:** **Khan Enterprises**  
 > **Codebase Paths:**  
@@ -118,6 +118,16 @@ All test accounts use the default password: **`Password123!`**
   - Manifest declared with `purpose: 'any'` and `purpose: 'maskable'` for 192px and 512px icons.
 - **In-App Install Prompt & Guidance**:
   - `[ 📲 Install App ]` button in `Navbar.tsx` and top mobile banner.
+
+### 4.4. Site Expenses & Profitability View Stability Fix (v3.3)
+- **Resolved React Rule of Hooks Invariant Crash**:
+  - In `AdminDashboard.tsx`, conditional early return statements (`if (viewingSiteProfitability)` and `if (viewingEmployeeId)`) were previously placed prior to `pieCategoryBreakdowns = useMemo(...)`.
+  - When an Admin clicked "View Expenses" on any site card, the component skipped subsequent hooks on re-render, causing React to throw `Rendered fewer hooks than expected`.
+  - Both conditional full-page view returns were relocated to strictly follow all hook definitions and memoized calculations.
+- **Defensive Null-Safety & Fallback Resilience in `SiteExpensesModal.tsx`**:
+  - Normalized all `siteProfitability` attributes with safe number casting (`Number(val ?? 0)`) to guard against unpopulated or null fields.
+  - Formatted currency values with `(Number(item.amount) || 0).toLocaleString('en-IN')` and `.toFixed(1)`.
+  - Added visual error boundaries and `isError` retry buttons to the mobile card grid and desktop table view.
   - Guidance modal detects iOS and Google App in-app webview: provides clear instructions to open in Safari and tap **"Add to Home Screen"** (`[+]`).
 
 ### 4.4. Mobile Layout & Date Picker Sizing

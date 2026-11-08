@@ -66,7 +66,10 @@ public class SitesController : ControllerBase
         string? LabourerName,
         DateTime? ApprovedAtUtc,
         string? ApprovedByUserName,
-        string? ApprovalComments
+        string? ApprovalComments,
+        uint Version = 1,
+        Guid? CategoryId = null,
+        string? InfoRequestDetails = null
     );
 
     [HttpGet]
@@ -271,7 +274,10 @@ public class SitesController : ControllerBase
                 LabourerName: p.Labourer?.Name,
                 ApprovedAtUtc: approvalLog?.TimestampUtc,
                 ApprovedByUserName: approvalLog?.PerformedByUserName,
-                ApprovalComments: p.ApprovalComments
+                ApprovalComments: p.ApprovalComments,
+                Version: p.Version,
+                CategoryId: p.CategoryId,
+                InfoRequestDetails: p.InfoRequestDetails
             );
         }).ToList();
 

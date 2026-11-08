@@ -1,28 +1,30 @@
 # KEPaymentTracker — Comprehensive System & Agent Handover Document
 
-> **Document Version:** 2.0  
-> **Updated:** November 2026  
+> **Document Version:** 3.0  
+> **Last Updated:** November 2026  
+> **Company / Tenant:** **Khan Enterprises**  
 > **Codebase Paths:**  
-> - **Frontend (React 18 + TS + Vite):** `D:\PaymentTracker-Frontend`  
+> - **Frontend (React 18 + TS + Vite + PWA):** `D:\PaymentTracker-Frontend`  
 > - **Backend (ASP.NET Core 10 Web API):** `D:\paymenttracker-backend`  
 > - **Live Render Cloud Backend:** `https://sitepaymenttracker-backend.onrender.com`  
-> - **Live Cloud Database:** Supabase PostgreSQL 17 (`hbstkhenoocozepiusmw`, Region: `ap-southeast-2`)  
-> **Target Audience:** Incoming AI Agents, Software Engineers, and DevOps Engineers  
+> - **Live Vercel Frontend:** `https://site-payment-tracker-frontend.vercel.app`  
+> - **Live Cloud Database:** Supabase PostgreSQL 17 (`aws-0-ap-southeast-2.pooler.supabase.com:5432`, DB: `postgres`)  
+> **Target Audience:** Incoming AI Agents, Software Engineers, DevOps Engineers  
 
 ---
 
 ## 1. Executive Overview & System Purpose
 
-**KEPaymentTracker** is an enterprise-grade construction payment, daily wage, and site expense tracking web application. Built for real-world construction infrastructure companies (e.g., *BuildCon Infra Ltd*), it addresses the operational challenges of managing multi-site field finances, labourer attendance, wage payouts, and expense compliance.
+**KEPaymentTracker** is an enterprise-grade construction payment, daily wage, site expense tracking, and worker self-service system built specifically for **Khan Enterprises**. It solves operational challenges in multi-site civil construction, daily labourer muster tracking, wage audit controls, and office employee expense claims.
 
 ### Key Business Problems Solved
 1. **Field Wage Exploitation Prevention**: Registered baseline daily wage rates are tracked and compared against payout requests. Discrepancies trigger automated audit warnings to prevent underpayment or wage diversion.
-2. **Multi-Admin Governance**: Designed for 4 admins. Admin-initiated expense or wage requests require approval by another Admin, eliminating single-point unilateral payouts.
-3. **Accountant Period Boundaries**: Accountants have read-only access restricted by default to a 1-year window, but can formally submit a **Period Access Request** to Admins for historical or future audits.
-4. **Site Financial Health & Measurement Books (MB)**: Measurement Books record verified field construction milestones. Sites track contract value vs actual expenses. Site Profit/Loss calculations are withheld until the Admin marks the final client payment / final MB received.
+2. **Multi-Admin Governance**: Designed for executive oversight. Admin-initiated expense or wage requests require approval by a peer Admin, eliminating unilateral payouts.
+3. **Accountant Period Boundaries**: Accountants have read-only gatekeeper access restricted by default to a 1-year window, but can formally submit a **Period Access Request** to Admins for historical or future audits.
+4. **Site Financial Health & Measurement Books (MB)**: Measurement Books record verified field milestones. Sites track contract value vs. actual expenses. Site Profit/Loss calculations are withheld until the Admin marks final client payment or final MB received.
 5. **Real-Time Strict Expense Separation**: Unapproved ("Pending") payment requests are strictly quarantined and never pollute expense pie charts or financial summaries until formally approved.
-6. **Multi-Identifier Field Login & Optional Email**: Construction supervisors and staff can log in using either their email address or a unique **6-digit User ID** (e.g. `521402`). Email is strictly optional for all non-admin employees (Supervisors, Accountants, Vendors).
-7. **Admin Self-Exclusion**: Admins never see themselves listed in the manageable employee roster (`/api/users`), preventing accidental self-deactivation.
+6. **Multi-Identifier Field Login & Optional Email**: Supervisors and site staff can log in using either their email address or a unique **6-digit User ID** (e.g. `521402`, `616244`, `400004`). Email is strictly optional for all non-admin employees.
+7. **Dedicated Office Worker Role**: Office workers can independently submit claims (travel, supplies, utilities) and track personal historical payments with multi-year period filters, while being strictly isolated from company-wide financials.
 
 ---
 
@@ -32,9 +34,10 @@
                            ┌────────────────────────────────────────┐
                            │         React 18 + Vite Frontend       │
                            │   Local: http://localhost:5173         │
-                           │   Cloud: Vercel / Netlify / Render     │
+                           │   Live: site-payment-tracker-frontend  │
+                           │         .vercel.app                    │
                            └───────────────────┬────────────────────┘
-                                               │ HTTPS / JSON
+                                               │ HTTPS / REST
                                                ▼
                            ┌────────────────────────────────────────┐
                            │      Render Docker Web Service         │
@@ -57,62 +60,162 @@
 - **API Swagger/OpenAPI**: `https://sitepaymenttracker-backend.onrender.com/swagger`
 - **Auth Endpoint**: `https://sitepaymenttracker-backend.onrender.com/api/auth/login`
 - **Payments Endpoint**: `https://sitepaymenttracker-backend.onrender.com/api/payments?year=2026`
+- **Vercel Live Frontend**: `https://site-payment-tracker-frontend.vercel.app`
 
 ---
 
-## 3. Database & Supabase Configuration
+## 3. User Roles, Permissions & Demo Credentials
 
-### Supabase Project Details
-- **Project Reference ID**: `hbstkhenoocozepiusmw`
-- **Region / Zone**: `ap-southeast-2` (AWS Sydney)
-- **Database Name**: `postgres`
-- **User**: `postgres.hbstkhenoocozepiusmw`
-- **Password**: `Usman$887517`
-- **Connection Pooler Host (IPv4)**: `aws-0-ap-southeast-2.pooler.supabase.com:5432`
+All test accounts use the default password: **`Password123!`**
 
-> [!IMPORTANT]
-> **Render IPv6 Gotcha**: Render free instances do not support outbound IPv6. Direct connections to `db.hbstkhenoocozepiusmw.supabase.co` fail with `SocketException: Network is unreachable`. Always route through the **Supabase IPv4 Connection Pooler** (`aws-0-ap-southeast-2.pooler.supabase.com:5432`) with username `postgres.<project-id>`.
-
----
-
-## 4. Test Credentials & Roster
-
-All seeded test accounts use the default password: **`Password123!`**
-
-| Role | Name | 6-Digit ID | Email | Notes |
+| Role | Demo User Name | Login Identifier | 6-Digit ID | Core Permissions & Scopes |
 | :--- | :--- | :--- | :--- | :--- |
-| **Admin** | Shaquib Khan | `749201` | `khanshaquib21@gmail.com` | Tenant Admin, email mandatory |
-| **Accountant** | Ramesh Sharma | `521402` | *(None - Optional)* | Pure 6-digit ID login |
-| **Supervisor** | Surendra Kumar | `616244` | `surendra@buildcon.in` | Assigned to Metro Station Project |
-| **Supervisor** | Suresh Verma | `349104` | `suresh.verma@buildcon.in` | Assigned to Highway Bypass Project |
-| **Supervisor** | Amit Patel | `839201` | *(None - Optional)* | Pure 6-digit ID login |
-| **Vendor** | Apex Supplies | `918234` | `orders@apexsupplies.in` | Material supplier vendor account |
+| **Admin** | Shaquib Khan | `khanshaquib21@gmail.com` | `749201` | Full administrative control: approve/reject claims, settle project sites, upload MBs, generate new 6-digit employee accounts, review Accountant period requests. |
+| **Accountant** | Ramesh Sharma | `521402` *(no email)* | `521402` | Read-only financial gatekeeper: verify vouchers, request clarifications, initiate own wage claims, export Excel ledgers, request access for historical years. |
+| **Supervisor** | Surendra Kumar | `616244` *(no email)* | `616244` | Site operations: onboard & manage labourers, submit weekly wage claims against daily rates, submit site material expenses, view site muster roll. |
+| **Office Worker** | Neha Sharma | `400004` / `officeworker@khanenterprises.com` | `400004` | **Self-service expense claims**: submit personal claims (travel, stationery, IT), track real-time approval status, audit personal historical payments with calendar period filters. Strictly isolated to own claims. |
+| **Vendor** | Apex Supplies | `918234` *(no email)* | `918234` | Vendor portal placeholder (Phase 2 expansion). |
 
 ---
 
-## 5. Dockerfile & Render Gotchas
+## 4. Key Functional Modules & Architectural Enhancements
 
-1. **Non-Root Docker User File Permissions (`APP_UID`)**:
-   - The official Microsoft ASP.NET runtime image runs as a non-root user `app` (`UID 1654`).
-   - If files or directories in `/app/Storage` are created at runtime, `UnauthorizedAccessException` is thrown unless the directory permissions are explicitly set.
-   - The `Dockerfile` creates `/app/Storage/Reports` and `/app/Logs` with `chmod -R 775` and `chown -R $APP_UID:$APP_UID`.
-   - The C# codebase also contains a graceful fallback in `ExportBackgroundWorker.cs` and `ReportsController.cs` to write exports to `Path.GetTempPath()` (`/tmp`) if `/app/Storage` is read-only.
-2. **Dynamic Port Binding**:
-   - Render injects the `$PORT` environment variable at runtime.
-   - The application binds dynamically to `http://0.0.0.0:${PORT:-8080}` via `Program.cs`.
-3. **CORS Configuration**:
-   - Wildcard CORS with credentials is fully enabled on the backend so any deployed frontend or local dev server can call the Render backend directly.
+### 4.1. Office Worker Self-Service Module
+- **Backend Isolation (`PaymentService.cs`)**:
+  - Automatically restricts queries for `OfficeWorker` to `userFilter = currentUserId`.
+  - Non-restricted calendar year access: Office workers can audit multi-year historical claims (e.g. 2026, 2025, 2024) without requiring Admin period unlock.
+- **Frontend Dashboard (`OfficeWorkerDashboard.tsx`)**:
+  - Prominent `+ Request Payment / Claim` button connected to `InitiatePaymentModal`.
+  - Historical Year selector (`Year 2026`, `Year 2025`, `Year 2024`...).
+  - Period filter presets: `Full Year`, `Last 30 Days`, custom date pickers (`min-h-[42px]`).
+  - Personal Summary Cards: Period Total Claims, Approved Claims, Pending Review, Lifetime Total Approved.
+  - Category Spend Pie Chart (`ExpensePieChart`) for personal claims.
+  - Touch-friendly mobile card view and desktop table view with admin approval notes.
+
+### 4.2. Redesigned Site Expenses View & Mobile Adaptability
+- **Modernized `SiteExpensesModal.tsx` / `SiteExpensesView`**:
+  - Replaced cramped, overflowing modal tables with a layout mirroring the Master Payment Ledger.
+  - **Full-Screen Adaptable View**: In `AdminDashboard.tsx` and `AccountantDashboard.tsx`, selecting a site opens a full-page view with a top `← Back to Sites & Profitability` button.
+  - **Top Financial Health Cards**: Final Payment Received, Total Site Expenses, Current Margin / Net Profit (₹ and %), MB Valuation.
+  - **Calendar Period Filter Bar**: `All Site Records`, `Last 30 Days`, `Reset Filters`, responsive start/end date inputs (`min-h-[42px]`), Category and Status dropdowns, and search input.
+  - **Site Expense Distribution Pie Chart (`ExpensePieChart`)**: Interactive breakdown of approved site spending by material, wages, equipment rental, and transport.
+  - **Mobile Card Grid (`md:hidden`)**: Touch-friendly cards showing bold amounts, category/worker tags, calendar duration, click-to-call phone links for supervisors, and admin approval notes.
+  - **Desktop Table View (`hidden md:block`)**: Spacious table with hover effects.
+
+### 4.3. PWA Configuration & Mobile Installation
+- **`vite-plugin-pwa` Implementation**:
+  - Auto-updates enabled with `registerType: 'autoUpdate'`.
+  - Workbox configured with `cleanupOutdatedCaches: true`, `clientsClaim: true`, `skipWaiting: true`, and `NetworkFirst` HTML navigation.
+  - Self-healing script in `index.html` catches missing asset errors, purges legacy caches, and safely recovers without reload loops.
+- **Apple iOS PWA Support**:
+  - Full meta tags: `apple-mobile-web-app-capable: yes`, `apple-mobile-web-app-status-bar-style: black-translucent`, `apple-mobile-web-app-title: KE Tracker`.
+  - Manifest declared with `purpose: 'any'` and `purpose: 'maskable'` for 192px and 512px icons.
+- **In-App Install Prompt & Guidance**:
+  - `[ 📲 Install App ]` button in `Navbar.tsx` and top mobile banner.
+  - Guidance modal detects iOS and Google App in-app webview: provides clear instructions to open in Safari and tap **"Add to Home Screen"** (`[+]`).
+
+### 4.4. Mobile Layout & Date Picker Sizing
+- Date pickers styled across all dashboards with `min-height: 42px !important; height: 42px !important; [color-scheme: dark]` to match button and dropdown heights on iOS Safari and Chrome.
+- Top tab headers use `.horizontal-scroll-container` with `whitespace-nowrap flex-shrink-0` for smooth swipeable navigation.
 
 ---
 
-## 6. Frontend Configuration
+## 5. Repository Structure & Key Files
 
-- **Location**: `D:\PaymentTracker-Frontend`
-- **Environment Files**:
-  - `.env.production`: `VITE_API_URL=https://sitepaymenttracker-backend.onrender.com/api`
-  - `.env.example`: Template for local vs cloud backend toggles.
-- **Vite Proxy (Local)**:
-  - In `vite.config.ts`, `/api` proxies to `http://localhost:5000` when running locally.
-- **Client Configuration (`src/core/api/client.ts`)**:
-  - Reads `import.meta.env.VITE_API_URL || '/api'`.
-  - Type definitions are provided in `src/vite-env.d.ts`.
+### Backend (`D:\paymenttracker-backend`)
+```
+src/
+├── EnterprisePaymentSystem.Api/
+│   ├── Controllers/
+│   │   ├── AuthController.cs          # Login with Email or 6-digit User ID
+│   │   ├── PaymentsController.cs      # Expenses, Wage requests, Approval engine
+│   │   ├── SitesController.cs         # Sites, Profitability, Site expenses
+│   │   ├── UsersController.cs         # User generation, User lifetime history
+│   │   └── PeriodAccessRequestsController.cs # Accountant period requests
+│   └── Program.cs                     # JWT, DI, Supabase / PostgreSQL config
+├── EnterprisePaymentSystem.Application/
+│   ├── DTOs/                          # PaymentDtos, AuthDtos, SiteDtos
+│   ├── Services/
+│   │   └── PaymentService.cs          # Strict role isolation & period validation
+│   └── Validators/                    # FluentValidation rules
+├── EnterprisePaymentSystem.Domain/
+│   ├── Entities/                      # User, Tenant, Site, PaymentRequest, Labourer
+│   └── Enums/
+│       ├── UserRole.cs                # Admin (0), Accountant (1), Supervisor (2), Vendor (3), OfficeWorker (4)
+│       └── PaymentStatus.cs           # Pending, InfoRequested, Approved, Rejected, Completed
+└── EnterprisePaymentSystem.Infrastructure/
+    ├── Data/
+    │   ├── ApplicationDbContext.cs
+    │   └── DbInitializer.cs           # Auto-seeds Khan Enterprises, users & claims
+    └── Services/                      # PasswordHasher, ExcelExportService
+```
+
+### Frontend (`D:\PaymentTracker-Frontend`)
+```
+src/
+├── components/
+│   ├── Navbar.tsx                     # Top navigation, role badges, install app button
+│   ├── LoginPage.tsx                  # Sign in with Quick Demo account selector
+│   ├── InstallPwaModal.tsx            # PWA guidance modal, banner, usePwaInstall hook
+│   ├── SiteExpensesModal.tsx          # Redesigned site expenses view with pie chart & cards
+│   ├── InitiatePaymentModal.tsx       # Expense claim modal with role label support
+│   └── ExpensePieChart.tsx            # Category distribution donut/pie visualization
+├── core/
+│   ├── api/client.ts                  # Axios client pointing to /api
+│   ├── auth/AuthContext.tsx           # Auth provider, role flags (isAdmin, isOfficeWorker, etc.)
+│   └── types/index.ts                 # TypeScript interfaces and UserRole enum
+├── modules/
+│   ├── admin/
+│   │   ├── AdminDashboard.tsx         # Master Ledger, Sites, Labourers, Employees Roster
+│   │   └── EmployeeExpensesView.tsx   # Dedicated employee history view
+│   ├── accountant/
+│   │   └── AccountantDashboard.tsx   # Read-only audit ledger, period request modal
+│   ├── supervisor/
+│   │   └── SupervisorDashboard.tsx   # Labourer muster roll, wage requests
+│   ├── officeworker/
+│   │   └── OfficeWorkerDashboard.tsx # Self-service claims, personal history & pie chart
+│   └── vendor/
+│       └── VendorDashboard.tsx        # Vendor portal placeholder
+├── App.tsx                            # Root router, dynamic module loading
+├── main.tsx                           # PWA service worker registration (immediate: true)
+└── index.css                          # Tailwind CSS, date picker 42px height rules
+```
+
+---
+
+## 6. How to Run & Test Locally
+
+### 1. Backend Server
+```powershell
+cd D:\paymenttracker-backend
+dotnet run --project src\EnterprisePaymentSystem.Api\EnterprisePaymentSystem.Api.csproj
+```
+- Listens on `http://localhost:5000`.
+- Automatically connects to Supabase PostgreSQL 17 or local DB.
+- Swagger available at `http://localhost:5000/swagger`.
+
+### 2. Frontend Server
+```powershell
+cd D:\PaymentTracker-Frontend
+npm run dev -- --host 0.0.0.0 --port 5173
+```
+- Accessible at `http://localhost:5173`.
+- Vite dev proxy routes `/api` directly to `https://sitepaymenttracker-backend.onrender.com` (or local backend on port 5000).
+
+### 3. Production Build Verification
+```powershell
+cd D:\PaymentTracker-Frontend
+npm run build
+```
+- Generates production bundles, service worker (`dist/sw.js`), and manifest (`dist/manifest.webmanifest`) with 0 errors.
+
+---
+
+## 7. Operational Guidelines for Future Agents
+1. **Tenant Brand Consistency**: Maintain the tenant name as **Khan Enterprises** across all UI elements, models, and badges. Do not reintroduce legacy "SaaS" or "Flat 30k" labels.
+2. **Git Commit & Push Rules**: Always check user instructions before pushing to `origin main`. If the user asks for local-only changes, do not push to remote.
+3. **Role Isolation Enforcement**:
+   - `OfficeWorker` must only query and see payments where `UserId == currentUserId`.
+   - `Accountant` is restricted to active year unless granted Admin period access.
+   - `Supervisor` manages their own assigned site labourers.
+4. **Mobile First Responsive Parity**: Whenever adding or modifying views, verify both the desktop table (`hidden md:block`) and mobile card grid (`md:hidden`) with `min-h-[42px]` inputs and touch-friendly buttons.

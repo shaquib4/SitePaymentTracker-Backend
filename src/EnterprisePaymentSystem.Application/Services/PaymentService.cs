@@ -44,12 +44,15 @@ public class PaymentService : IPaymentService
             throw new DomainException($"Expense dates must fall strictly within the selected year {request.ExpenseYear}.");
         }
 
+        var description = ValidateAndNormalizeDescription(request.Description);
+
         var payment = new PaymentRequest
         {
             TenantId = tenantId,
             UserId = userId,
             Title = request.Title.Trim(),
-            Description = request.Description.Trim(),
+            Description = description,
+            RequestedAmount = request.Amount,
             Amount = request.Amount,
             Currency = request.Currency.ToUpperInvariant(),
             Category = request.Category.Trim(),
@@ -102,6 +105,8 @@ public class PaymentService : IPaymentService
             throw new DomainException("Wage amount must be greater than zero.");
         }
 
+        var description = ValidateAndNormalizeDescription(request.Description);
+
         var payment = new PaymentRequest
         {
             TenantId = tenantId,
@@ -110,7 +115,8 @@ public class PaymentService : IPaymentService
             LabourerId = request.LabourerId,
             Category = "Labour Wages",
             Title = $"Labour Wage Payout ({request.StartDate:dd/MM} - {request.EndDate:dd/MM})",
-            Description = request.Description.Trim(),
+            Description = description,
+            RequestedAmount = request.Amount,
             Amount = request.Amount,
             Currency = "INR",
             ExpenseYear = request.ExpenseYear,
@@ -162,8 +168,11 @@ public class PaymentService : IPaymentService
             throw new DomainException($"Expense dates must fall strictly within the selected year {request.ExpenseYear}.");
         }
 
+        var description = ValidateAndNormalizeDescription(request.Description);
+
         payment.Title = request.Title.Trim();
-        payment.Description = request.Description.Trim();
+        payment.Description = description;
+        payment.RequestedAmount = request.Amount;
         payment.Amount = request.Amount;
         payment.Category = request.Category.Trim();
         payment.CategoryId = request.CategoryId;
@@ -203,7 +212,7 @@ public class PaymentService : IPaymentService
         return payment == null ? null : MapToDto(payment);
     }
 
-    public async Task<IReadOnlyList<PaymentResponseDto>> GetListAsync(PaymentFilterQuery query, CancellationToken ct = default)
+    public async Task<PagedPaymentsResponseDto> GetListAsync(PaymentFilterQuery query, CancellationToken ct = default)
     {
         // Accountant restriction: restricted to active calendar year UNLESS an out-of-period access request is approved by Admin!
         var userRole = _currentUserService.Role;
@@ -230,9 +239,9 @@ public class PaymentService : IPaymentService
             }
         }
 
-        // Supervisor or OfficeWorker restriction: strictly only see payments submitted by themselves
+        // Supervisor or OfficeWorker restriction (or OnlyMine toggle): strictly only see payments submitted by themselves
         Guid? userFilter = null;
-        if ((userRole == nameof(UserRole.Supervisor) || userRole == nameof(UserRole.OfficeWorker) || userRole == "OfficeWorker") && _currentUserService.UserId.HasValue)
+        if ((userRole == nameof(UserRole.Supervisor) || userRole == nameof(UserRole.OfficeWorker) || userRole == "OfficeWorker" || query.OnlyMine) && _currentUserService.UserId.HasValue)
         {
             userFilter = _currentUserService.UserId.Value;
         }
@@ -241,31 +250,16 @@ public class PaymentService : IPaymentService
             userFilter = query.RequesterId.Value;
         }
 
-        var list = await _paymentRepository.GetFilteredPaymentsAsync(
-            query.Year,
-            query.Status,
-            query.Category,
-            query.Search,
-            userFilter,
-            ct
+        var pagedResult = await _paymentRepository.GetPagedPaymentsAsync(query, userFilter, ct);
+
+        return new PagedPaymentsResponseDto(
+            Items: pagedResult.Items.Select(MapToDto).ToList(),
+            Page: pagedResult.Page,
+            PageSize: pagedResult.PageSize,
+            TotalCount: pagedResult.TotalCount,
+            TotalPages: pagedResult.TotalPages,
+            Summary: pagedResult.Summary
         );
-
-        if (query.SiteId.HasValue)
-        {
-            list = list.Where(p => p.SiteId == query.SiteId.Value).ToList();
-        }
-
-        if (query.StartDate.HasValue)
-        {
-            list = list.Where(p => p.StartDate >= query.StartDate.Value).ToList();
-        }
-
-        if (query.EndDate.HasValue)
-        {
-            list = list.Where(p => p.EndDate <= query.EndDate.Value).ToList();
-        }
-
-        return list.Select(MapToDto).ToList();
     }
 
     public async Task<PaymentResponseDto> SubmitAsync(Guid id, string? comments = null, CancellationToken ct = default)
@@ -332,7 +326,9 @@ public class PaymentService : IPaymentService
             request.Comments,
             request.OverrideCategoryId,
             request.NewCategoryName,
-            request.OverrideSiteId
+            request.OverrideSiteId,
+            request.ApprovedAmount,
+            request.UpdatedDescription
         );
         payment.Version++;
 
@@ -407,6 +403,19 @@ public class PaymentService : IPaymentService
         return list.Select(MapToDto).ToList();
     }
 
+    private string ValidateAndNormalizeDescription(string? description)
+    {
+        var normalized = description?.Trim() ?? string.Empty;
+        var isAdmin = string.Equals(_currentUserService.Role, nameof(UserRole.Admin), StringComparison.OrdinalIgnoreCase);
+
+        if (isAdmin && string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new DomainException("Description is required when an Admin submits a payment request.");
+        }
+
+        return normalized;
+    }
+
     private static PaymentResponseDto MapToDto(PaymentRequest p)
     {
         var auditDtos = p.AuditLogs
@@ -421,6 +430,11 @@ public class PaymentService : IPaymentService
                 a.TimestampUtc,
                 a.Comments
             )).ToList();
+
+        var requestedAmount = p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount;
+        var approvedAmount = p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed
+            ? p.Amount
+            : (decimal?)null;
 
         return new PaymentResponseDto(
             Id: p.Id,
@@ -452,7 +466,9 @@ public class PaymentService : IPaymentService
             CreatedAtUtc: p.CreatedAtUtc,
             UpdatedAtUtc: p.UpdatedAtUtc,
             Version: p.Version,
-            AuditLogs: auditDtos
+            AuditLogs: auditDtos,
+            RequestedAmount: requestedAmount,
+            ApprovedAmount: approvedAmount
         );
     }
 }

@@ -136,6 +136,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             b.HasKey(p => p.Id);
             b.Property(p => p.Title).IsRequired().HasMaxLength(150);
             b.Property(p => p.Description).HasMaxLength(1000);
+            b.Property(p => p.RequestedAmount).HasPrecision(14, 2);
             b.Property(p => p.Amount).HasPrecision(14, 2);
             b.Property(p => p.Currency).IsRequired().HasMaxLength(3);
             b.Property(p => p.Category).IsRequired().HasMaxLength(100);

@@ -30,6 +30,7 @@ public class PaymentRequest
     public string Description { get; set; } = string.Empty;
 
     // Strict Financial Precision: NUMERIC(14,2)
+    public decimal RequestedAmount { get; set; }
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "INR";
 
@@ -113,11 +114,38 @@ public class PaymentRequest
         string? comments = null,
         Guid? overrideCategoryId = null,
         string? overrideCategoryName = null,
-        Guid? overrideSiteId = null)
+        Guid? overrideSiteId = null,
+        decimal? approvedAmount = null,
+        string? updatedDescription = null)
     {
         if (Status != PaymentStatus.Pending && Status != PaymentStatus.InfoRequested)
         {
             throw new DomainException($"Cannot approve payment in status '{Status}'. Only Pending or InfoRequested requests can be approved.");
+        }
+
+        // Preserve original requested amount so approval adjustments never overwrite it
+        var effectiveRequested = RequestedAmount > 0m ? RequestedAmount : Amount;
+        RequestedAmount = effectiveRequested;
+
+        var finalApprovedAmount = Amount;
+        if (approvedAmount.HasValue)
+        {
+            if (approvedAmount.Value <= 0m)
+            {
+                throw new DomainException("Approved amount must be greater than zero.");
+            }
+            if (approvedAmount.Value > effectiveRequested)
+            {
+                throw new DomainException($"Approved amount ({approvedAmount.Value:N2}) cannot exceed the requested amount ({effectiveRequested:N2}).");
+            }
+            finalApprovedAmount = approvedAmount.Value;
+        }
+
+        Amount = finalApprovedAmount;
+
+        if (updatedDescription != null)
+        {
+            Description = updatedDescription.Trim();
         }
 
         var prev = Status;
@@ -139,6 +167,12 @@ public class PaymentRequest
             SiteId = overrideSiteId.Value;
         }
 
+        var auditComment = finalApprovedAmount != effectiveRequested
+            ? (string.IsNullOrWhiteSpace(comments)
+                ? $"Approved {finalApprovedAmount:N2} (Requested: {effectiveRequested:N2})"
+                : $"{comments.Trim()} | Approved {finalApprovedAmount:N2} (Requested: {effectiveRequested:N2})")
+            : (comments ?? "Approved by administrator");
+
         AuditLogs.Add(new PaymentAuditLog
         {
             TenantId = TenantId,
@@ -149,7 +183,7 @@ public class PaymentRequest
             PerformedByUserId = adminUserId,
             PerformedByUserName = adminUserName,
             TimestampUtc = DateTime.UtcNow,
-            Comments = comments ?? "Approved by administrator"
+            Comments = auditComment
         });
     }
 

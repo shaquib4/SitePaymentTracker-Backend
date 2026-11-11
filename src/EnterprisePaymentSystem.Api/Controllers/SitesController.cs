@@ -1,3 +1,4 @@
+using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Interfaces;
 using EnterprisePaymentSystem.Domain.Entities;
 using EnterprisePaymentSystem.Domain.Enums;
@@ -69,7 +70,22 @@ public class SitesController : ControllerBase
         string? ApprovalComments,
         uint Version = 1,
         Guid? CategoryId = null,
-        string? InfoRequestDetails = null
+        string? InfoRequestDetails = null,
+        decimal RequestedAmount = 0m,
+        decimal? ApprovedAmount = null
+    );
+
+    public record PagedSiteExpensesResponseDto(
+        IReadOnlyList<SiteExpenseItemDto> Items,
+        int Page,
+        int PageSize,
+        int TotalCount,
+        int TotalPages,
+        decimal TotalApprovedExpenses,
+        decimal TotalPendingExpenses,
+        decimal GrandTotalExpenses,
+        IReadOnlyList<string> DistinctCategories,
+        IReadOnlyList<CategoryBreakdownDto> CategoryBreakdowns
     );
 
     [HttpGet]
@@ -226,28 +242,103 @@ public class SitesController : ControllerBase
     /// </summary>
     [HttpGet("{siteId:guid}/expenses")]
     [Authorize(Roles = "Admin,Accountant")]
-    public async Task<ActionResult<IEnumerable<SiteExpenseItemDto>>> GetSiteExpenses(
+    public async Task<ActionResult<PagedSiteExpensesResponseDto>> GetSiteExpenses(
         Guid siteId,
         [FromQuery] DateOnly? startDate = null,
         [FromQuery] DateOnly? endDate = null,
         [FromQuery] string? category = null,
+        [FromQuery] PaymentStatus? status = null,
+        [FromQuery] string? search = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        var site = await _context.Sites.FirstOrDefaultAsync(s => s.Id == siteId, ct);
+        var site = await _context.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId, ct);
         if (site == null) return NotFound("Site not found.");
 
-        var query = _context.PaymentRequests
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
+        var baseQuery = _context.PaymentRequests
+            .AsNoTracking()
+            .Where(p => p.SiteId == siteId);
+
+        var distinctCategories = await baseQuery
+            .Where(p => p.Category != null && p.Category != "")
+            .Select(p => p.Category)
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync(ct);
+
+        var summaryQuery = baseQuery;
+        if (startDate.HasValue) summaryQuery = summaryQuery.Where(p => p.StartDate >= startDate.Value);
+        if (endDate.HasValue) summaryQuery = summaryQuery.Where(p => p.EndDate <= endDate.Value);
+        if (status.HasValue) summaryQuery = summaryQuery.Where(p => p.Status == status.Value);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            summaryQuery = summaryQuery.Where(p =>
+                (p.Title != null && p.Title.ToLower().Contains(s)) ||
+                (p.Category != null && p.Category.ToLower().Contains(s)) ||
+                (p.Description != null && p.Description.ToLower().Contains(s)) ||
+                (p.Labourer != null && p.Labourer.Name != null && p.Labourer.Name.ToLower().Contains(s)) ||
+                (p.User != null && p.User.FullName != null && p.User.FullName.ToLower().Contains(s)) ||
+                (p.User != null && p.User.PhoneNumber != null && p.User.PhoneNumber.ToLower().Contains(s)));
+        }
+
+        var statusGroups = await summaryQuery
+            .GroupBy(p => p.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count(), Amount = g.Sum(p => p.Amount) })
+            .ToListAsync(ct);
+
+        var totalApproved = statusGroups
+            .Where(g => g.Status == PaymentStatus.Approved || g.Status == PaymentStatus.Completed)
+            .Sum(g => g.Amount);
+        var totalPending = statusGroups
+            .Where(g => g.Status == PaymentStatus.Pending || g.Status == PaymentStatus.InfoRequested)
+            .Sum(g => g.Amount);
+        var grandTotal = statusGroups.Sum(g => g.Amount);
+        var approvedOrCompletedCount = statusGroups
+            .Where(g => g.Status == PaymentStatus.Approved || g.Status == PaymentStatus.Completed)
+            .Sum(g => g.Count);
+
+        var pieQuery = summaryQuery;
+        if (!status.HasValue && approvedOrCompletedCount > 0)
+        {
+            pieQuery = pieQuery.Where(p => p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed);
+        }
+
+        var rawCategoryGroups = await pieQuery
+            .GroupBy(p => p.Category)
+            .Select(g => new { Category = g.Key, Count = g.Count(), TotalAmount = g.Sum(p => p.Amount) })
+            .OrderByDescending(c => c.TotalAmount)
+            .ToListAsync(ct);
+
+        var categoryBreakdowns = rawCategoryGroups
+            .Select(c => new CategoryBreakdownDto(
+                string.IsNullOrWhiteSpace(c.Category) ? "General" : c.Category,
+                c.Count,
+                c.TotalAmount))
+            .ToList();
+
+        var pagedQuery = summaryQuery;
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            var cat = category.Trim();
+            pagedQuery = pagedQuery.Where(p => p.Category == cat);
+        }
+
+        var totalCount = await pagedQuery.CountAsync(ct);
+        var totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)pageSize);
+
+        var list = await pagedQuery
+            .OrderByDescending(p => p.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Include(p => p.User)
             .Include(p => p.Labourer)
             .Include(p => p.AuditLogs)
-            .Where(p => p.SiteId == siteId);
-
-        if (startDate.HasValue) query = query.Where(p => p.StartDate >= startDate.Value);
-        if (endDate.HasValue) query = query.Where(p => p.EndDate <= endDate.Value);
-        if (!string.IsNullOrWhiteSpace(category)) query = query.Where(p => p.Category == category);
-
-        var list = await query
-            .OrderByDescending(p => p.CreatedAtUtc)
             .ToListAsync(ct);
 
         var dtos = list.Select(p =>
@@ -277,11 +368,24 @@ public class SitesController : ControllerBase
                 ApprovalComments: p.ApprovalComments,
                 Version: p.Version,
                 CategoryId: p.CategoryId,
-                InfoRequestDetails: p.InfoRequestDetails
+                InfoRequestDetails: p.InfoRequestDetails,
+                RequestedAmount: p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount,
+                ApprovedAmount: (p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed) ? p.Amount : null
             );
         }).ToList();
 
-        return Ok(dtos);
+        return Ok(new PagedSiteExpensesResponseDto(
+            Items: dtos,
+            Page: page,
+            PageSize: pageSize,
+            TotalCount: totalCount,
+            TotalPages: totalPages,
+            TotalApprovedExpenses: totalApproved,
+            TotalPendingExpenses: totalPending,
+            GrandTotalExpenses: grandTotal,
+            DistinctCategories: distinctCategories,
+            CategoryBreakdowns: categoryBreakdowns
+        ));
     }
 
     /// <summary>

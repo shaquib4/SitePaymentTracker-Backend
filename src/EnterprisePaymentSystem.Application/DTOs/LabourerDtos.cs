@@ -62,7 +62,8 @@ public record LabourerWagePayoutItemDto(
     DateTime? ApprovalDate,
     string? ApprovedByUserName,
     string? ApprovalComments,
-    string? RejectionReason
+    string? RejectionReason,
+    decimal RequestedAmount = 0m
 );
 
 public record LabourerWageAuditResponse(
@@ -89,4 +90,21 @@ public record LabourerWageAuditResponse(
     string ExploitationRisk,
     string ExploitationRiskDescription,
     List<LabourerWagePayoutItemDto> Payouts
+);
+
+public record LabourerPagedSummaryDto(
+    int TotalCount,
+    int ActiveCount,
+    int InactiveCount,
+    decimal TotalApprovedPayouts,
+    decimal TotalClaimedPayouts
+);
+
+public record PagedLabourersResponseDto(
+    IReadOnlyList<LabourerDto> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages,
+    LabourerPagedSummaryDto Summary
 );

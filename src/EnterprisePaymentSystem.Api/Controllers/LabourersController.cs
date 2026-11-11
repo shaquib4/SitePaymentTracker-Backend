@@ -30,45 +30,110 @@ public class LabourersController : ControllerBase
     /// Supports optional filtering by siteId and supervisorId.
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<LabourerDto>>> GetLabourers(
+    public async Task<ActionResult<PagedLabourersResponseDto>> GetLabourers(
         [FromQuery] Guid? siteId = null,
         [FromQuery] Guid? supervisorId = null,
+        [FromQuery] string? search = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] bool all = false,
         CancellationToken ct = default)
     {
         var role = _currentUserService.Role;
-        var queryable = _context.Labourers
-            .Include(l => l.Supervisor)
-            .Include(l => l.Site)
-            .Include(l => l.CreatedByUser)
-            .Include(l => l.WagePayments)
-            .AsNoTracking();
+        var baseQuery = _context.Labourers
+            .AsNoTracking()
+            .AsQueryable();
 
         // Supervisors only see their managed labourers
         if (role == nameof(UserRole.Supervisor) && _currentUserService.UserId.HasValue)
         {
-            queryable = queryable.Where(l => l.SupervisorId == _currentUserService.UserId.Value);
+            baseQuery = baseQuery.Where(l => l.SupervisorId == _currentUserService.UserId.Value);
         }
         else if (supervisorId.HasValue)
         {
-            queryable = queryable.Where(l => l.SupervisorId == supervisorId.Value);
+            baseQuery = baseQuery.Where(l => l.SupervisorId == supervisorId.Value);
         }
 
         if (siteId.HasValue)
         {
-            queryable = queryable.Where(l => l.SiteId == siteId.Value);
+            baseQuery = baseQuery.Where(l => l.SiteId == siteId.Value);
         }
 
-        var entities = await queryable
-            .OrderBy(l => l.Name)
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            baseQuery = baseQuery.Where(l =>
+                (l.Name != null && l.Name.ToLower().Contains(s)) ||
+                (l.Supervisor != null && l.Supervisor.FullName != null && l.Supervisor.FullName.ToLower().Contains(s)) ||
+                (l.Site != null && l.Site.Name != null && l.Site.Name.ToLower().Contains(s)));
+        }
+
+        var totalCount = await baseQuery.CountAsync(ct);
+        var activeCount = await baseQuery.CountAsync(l => l.IsActive, ct);
+        var inactiveCount = totalCount - activeCount;
+
+        var filteredIdsQuery = baseQuery.Select(l => l.Id);
+        var summaryWageGroups = await _context.PaymentRequests
+            .AsNoTracking()
+            .Where(p => p.LabourerId.HasValue && filteredIdsQuery.Contains(p.LabourerId.Value))
+            .GroupBy(p => p.Status)
+            .Select(g => new
+            {
+                Status = g.Key,
+                Amount = g.Sum(p => p.Amount),
+                RequestedAmount = g.Sum(p => p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount)
+            })
             .ToListAsync(ct);
+
+        var totalClaimedPayouts = summaryWageGroups.Sum(g => g.RequestedAmount);
+        var totalApprovedPayouts = summaryWageGroups
+            .Where(g => g.Status == PaymentStatus.Approved || g.Status == PaymentStatus.Completed)
+            .Sum(g => g.Amount);
+
+        var effectivePage = all ? 1 : Math.Max(1, page);
+        var effectivePageSize = all ? Math.Max(1, totalCount) : Math.Clamp(pageSize, 1, 200);
+        var totalPages = totalCount == 0 ? 0 : (all ? 1 : (int)Math.Ceiling(totalCount / (double)effectivePageSize));
+
+        var pagedLabourersQuery = baseQuery
+            .Include(l => l.Supervisor)
+            .Include(l => l.Site)
+            .Include(l => l.CreatedByUser)
+            .OrderBy(l => l.Name);
+
+        var entities = all
+            ? await pagedLabourersQuery.ToListAsync(ct)
+            : await pagedLabourersQuery
+                .Skip((effectivePage - 1) * effectivePageSize)
+                .Take(effectivePageSize)
+                .ToListAsync(ct);
+
+        var pageLabourerIds = entities.Select(l => l.Id).ToList();
+        var pageWages = pageLabourerIds.Count == 0
+            ? []
+            : await _context.PaymentRequests
+                .AsNoTracking()
+                .Where(p => p.LabourerId.HasValue && pageLabourerIds.Contains(p.LabourerId.Value))
+                .Select(p => new
+                {
+                    LabourerId = p.LabourerId!.Value,
+                    p.Status,
+                    p.Amount,
+                    p.RequestedAmount,
+                    p.StartDate,
+                    p.EndDate
+                })
+                .ToListAsync(ct);
+
+        var wagesByLabourer = pageWages.ToLookup(w => w.LabourerId);
 
         var dtoList = entities.Select(l =>
         {
-            var approvedPayments = l.WagePayments
+            var wages = wagesByLabourer[l.Id].ToList();
+            var approvedPayments = wages
                 .Where(p => p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed)
                 .ToList();
 
-            var totalClaimed = l.WagePayments.Sum(p => p.Amount);
+            var totalClaimed = wages.Sum(p => p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount);
             var totalApproved = approvedPayments.Sum(p => p.Amount);
             var totalDaysWorked = approvedPayments.Sum(p => Math.Max(1, (p.EndDate.DayNumber - p.StartDate.DayNumber) + 1));
 
@@ -90,14 +155,27 @@ public class LabourersController : ControllerBase
                 CreatedByUserRole: l.CreatedByUser?.Role.ToString() ?? "Supervisor",
                 TotalWagesClaimed: totalClaimed,
                 TotalWagesApproved: totalApproved,
-                TotalWageClaimsCount: l.WagePayments.Count,
-                PendingWageClaimsCount: l.WagePayments.Count(p => p.Status == PaymentStatus.Pending || p.Status == PaymentStatus.InfoRequested),
+                TotalWageClaimsCount: wages.Count,
+                PendingWageClaimsCount: wages.Count(p => p.Status == PaymentStatus.Pending || p.Status == PaymentStatus.InfoRequested),
                 ApprovedWageClaimsCount: approvedPayments.Count,
                 TotalDaysWorked: totalDaysWorked
             );
         }).ToList();
 
-        return Ok(dtoList);
+        return Ok(new PagedLabourersResponseDto(
+            Items: dtoList,
+            Page: effectivePage,
+            PageSize: effectivePageSize,
+            TotalCount: totalCount,
+            TotalPages: totalPages,
+            Summary: new LabourerPagedSummaryDto(
+                TotalCount: totalCount,
+                ActiveCount: activeCount,
+                InactiveCount: inactiveCount,
+                TotalApprovedPayouts: totalApprovedPayouts,
+                TotalClaimedPayouts: totalClaimedPayouts
+            )
+        ));
     }
 
     /// <summary>
@@ -307,7 +385,7 @@ public class LabourersController : ControllerBase
             CreatedByUserId: updated.CreatedByUserId,
             CreatedByUserName: updated.CreatedByUser?.FullName ?? "Unknown",
             CreatedByUserRole: updated.CreatedByUser?.Role.ToString() ?? "Unknown",
-            TotalWagesClaimed: updated.WagePayments.Sum(p => p.Amount),
+            TotalWagesClaimed: updated.WagePayments.Sum(p => p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount),
             TotalWagesApproved: approvedPayments.Sum(p => p.Amount),
             TotalWageClaimsCount: updated.WagePayments.Count,
             PendingWageClaimsCount: updated.WagePayments.Count(p => p.Status == PaymentStatus.Pending || p.Status == PaymentStatus.InfoRequested),
@@ -430,7 +508,8 @@ public class LabourersController : ControllerBase
                 ApprovalDate: approvalLog?.TimestampUtc,
                 ApprovedByUserName: approvalLog?.PerformedByUserName,
                 ApprovalComments: p.ApprovalComments,
-                RejectionReason: p.RejectionReason
+                RejectionReason: p.RejectionReason,
+                RequestedAmount: p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount
             ));
         }
 

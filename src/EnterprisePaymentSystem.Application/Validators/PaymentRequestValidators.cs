@@ -11,6 +11,10 @@ public class CreatePaymentRequestValidator : AbstractValidator<CreatePaymentRequ
             .NotEmpty().WithMessage("Title is required.")
             .MaximumLength(150).WithMessage("Title cannot exceed 150 characters.");
 
+        RuleFor(x => x.Description)
+            .MaximumLength(1000).WithMessage("Description cannot exceed 1000 characters.")
+            .When(x => !string.IsNullOrEmpty(x.Description));
+
         RuleFor(x => x.Amount)
             .GreaterThan(0).WithMessage("Amount must be greater than zero.")
             .PrecisionScale(14, 2, false).WithMessage("Amount must not exceed 14 digits with 2 decimal places.");
@@ -45,6 +49,10 @@ public class UpdatePaymentRequestValidator : AbstractValidator<UpdatePaymentRequ
         RuleFor(x => x.Title)
             .NotEmpty().WithMessage("Title is required.")
             .MaximumLength(150).WithMessage("Title cannot exceed 150 characters.");
+
+        RuleFor(x => x.Description)
+            .MaximumLength(1000).WithMessage("Description cannot exceed 1000 characters.")
+            .When(x => !string.IsNullOrEmpty(x.Description));
 
         RuleFor(x => x.Amount)
             .GreaterThan(0).WithMessage("Amount must be greater than zero.")

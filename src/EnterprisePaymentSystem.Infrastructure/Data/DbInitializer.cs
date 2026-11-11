@@ -22,6 +22,14 @@ public static class DbInitializer
     {
         await context.Database.EnsureCreatedAsync();
 
+        if (context.Database.IsNpgsql())
+        {
+            await context.Database.ExecuteSqlRawAsync("""
+                ALTER TABLE "PaymentRequests" ADD COLUMN IF NOT EXISTS "RequestedAmount" numeric(14,2) NOT NULL DEFAULT 0;
+                UPDATE "PaymentRequests" SET "RequestedAmount" = "Amount" WHERE "RequestedAmount" = 0 AND "Amount" > 0;
+                """);
+        }
+
         if (await context.Tenants.IgnoreQueryFilters().AnyAsync())
         {
             // Ensure OfficeWorker user exists in Khan Enterprises even if already seeded
@@ -57,6 +65,7 @@ public static class DbInitializer
                         Category = "Office Supplies & IT",
                         Title = "Stationery, Printer Toners & Office Paper",
                         Description = "Monthly administrative supplies for head office",
+                        RequestedAmount = 14500.00m,
                         Amount = 14500.00m,
                         Currency = "INR",
                         ExpenseYear = 2026,
@@ -86,6 +95,7 @@ public static class DbInitializer
                         Category = "Travel & Client Meeting",
                         Title = "Client Coordination & Site Travel Reimbursement",
                         Description = "Cab and fuel allowance for Gurugram Pier 14 inspection visit",
+                        RequestedAmount = 6800.00m,
                         Amount = 6800.00m,
                         Currency = "INR",
                         ExpenseYear = 2026,
@@ -115,6 +125,7 @@ public static class DbInitializer
                         Category = "Office Utilities",
                         Title = "Annual High-Speed Broadband & Cloud Telephony",
                         Description = "FY 2025 Office Internet & VoIP line setup",
+                        RequestedAmount = 24000.00m,
                         Amount = 24000.00m,
                         Currency = "INR",
                         ExpenseYear = 2025,
@@ -302,6 +313,7 @@ public static class DbInitializer
             Category = "Cement",
             Title = "Ultratech Cement - 200 Bags for Metro Station Slab",
             Description = "Urgent cement delivery for foundation slab cast",
+            RequestedAmount = 78000.00m,
             Amount = 78000.00m,
             Currency = "INR",
             ExpenseYear = 2026,
@@ -346,6 +358,7 @@ public static class DbInitializer
             Category = "Labour Wages",
             Title = "Weekly Wages - Ramesh Yadav (12 Days)",
             Description = "Bar-bending and rebar tying wage payout",
+            RequestedAmount = 7800.00m,
             Amount = 7800.00m,
             Currency = "INR",
             ExpenseYear = 2026,

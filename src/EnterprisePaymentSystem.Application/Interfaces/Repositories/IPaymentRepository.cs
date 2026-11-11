@@ -1,7 +1,17 @@
+using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Domain.Entities;
 using EnterprisePaymentSystem.Domain.Enums;
 
 namespace EnterprisePaymentSystem.Application.Interfaces.Repositories;
+
+public record PagedPaymentEntitiesResult(
+    IReadOnlyList<PaymentRequest> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages,
+    PaymentPagedSummaryDto Summary
+);
 
 public interface IPaymentRepository
 {
@@ -11,6 +21,10 @@ public interface IPaymentRepository
         PaymentStatus? status = null,
         string? category = null,
         string? search = null,
+        Guid? userIdFilter = null,
+        CancellationToken ct = default);
+    Task<PagedPaymentEntitiesResult> GetPagedPaymentsAsync(
+        PaymentFilterQuery query,
         Guid? userIdFilter = null,
         CancellationToken ct = default);
     Task<IReadOnlyList<PaymentRequest>> GetPaymentsByYearAsync(int year, CancellationToken ct = default);

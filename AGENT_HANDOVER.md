@@ -1,6 +1,6 @@
 # KEPaymentTracker — Comprehensive System & Agent Handover Document
 
-> **Document Version:** 3.3  
+> **Document Version:** 3.6  
 > **Last Updated:** November 2026  
 > **Company / Tenant:** **Khan Enterprises**  
 > **Codebase Paths:**  
@@ -26,6 +26,9 @@
 6. **Multi-Identifier Field Login & Optional Email**: Supervisors and site staff can log in using either their email address or a unique **6-digit User ID** (e.g. `521402`, `616244`, `400004`). Email is strictly optional for all non-admin employees.
 7. **Dedicated Office Worker Role**: Office workers can independently submit claims (travel, supplies, utilities) and track personal historical payments with multi-year period filters, while being strictly isolated from company-wide financials.
 8. **Direct Site View Approvals**: Admins can inspect and approve payment claims directly inside the dedicated Project Site view without switching to the master ledger.
+9. **High-Performance Pagination & Shimmer UI (v3.4)**: Limits display to 20 records per page by default across all dashboards to eliminate DOM lag on annual filters, with animated shimmer loading placeholders and calendar quarter filters.
+10. **True Backend Server-Side Pagination & SQL Summarization (v3.5)**: Eliminates unbounded full-table transfers across all primary endpoints (`GET /api/payments`, `/api/sites/{id}/expenses`, `/api/users/{id}/history`, `/api/users`, `/api/labourers`). PostgreSQL executes `CountAsync`, `GroupBy` financial KPIs, and dynamic pie-chart breakdowns across all matching rows while serializing only the active page (`pageSize = 20` default).
+11. **Role-Aware Optional Descriptions & Requested/Approved Amount Editing (v3.6)**: `Description` is optional for all non-admin roles and required for Admin-initiated payment requests; during Admin approval, Admin can edit the employee's `Description` and adjust `ApprovedAmount` strictly `<= RequestedAmount` (and `> 0`), while `RequestedAmount` and `ApprovedAmount` are tracked and displayed across ledgers and Excel exports.
 
 ---
 
@@ -130,7 +133,17 @@ All test accounts use the default password: **`Password123!`**
   - Added visual error boundaries and `isError` retry buttons to the mobile card grid and desktop table view.
   - Guidance modal detects iOS and Google App in-app webview: provides clear instructions to open in Safari and tap **"Add to Home Screen"** (`[+]`).
 
-### 4.4. Mobile Layout & Date Picker Sizing
+### 4.4. High-Performance Pagination, Shimmer UI & Quarter Presets (v3.4)
+- **Modular Reusable Pagination (`Pagination.tsx`) & Calendar Quarter Presets (`QuarterFilterBar.tsx`)**: Defaults to 20 records per page (`10`, `20`, `50`, `100` options), paired with animated dark-mode shimmer wave skeletons (`ShimmerLoader.tsx`) and quick quarter pills (`Full Year`, `Q1`-`Q4`, `Last Quarter`, `Last 30 Days`, `Reset`).
+
+### 4.5. True Backend Server-Side Pagination & SQL Summarization Engine (v3.5)
+- **PostgreSQL-First Filtering, Aggregates & Slicing**:
+  - `GET /api/payments` (`PaymentRepository.GetPagedPaymentsAsync`) performs all filtering (`Year`, `Status`, `SiteId`, `StartDate`, `EndDate`, `Search`, `Scope`, `OnlyMine`, `Category`) in SQL, computes `PaymentPagedSummaryDto` across all matching rows using `GroupBy`, and transfers only `.Skip((page - 1) * pageSize).Take(pageSize)` rows (`pageSize = 20` default, max `200`).
+  - `GET /api/sites/{siteId}/expenses` returns `PagedSiteExpensesResponseDto` with SQL `status`, `search`, date, and `category` filtering, distinct site categories, KPI sums, and dynamic `CategoryBreakdowns`.
+  - `GET /api/users/{id}/history` returns extended `UserHistoryResponse` with `siteId`, `status`, `search`, `page`, `pageSize` filtering, `FilteredCount`, `TotalRequestsCount`, and `CategoryBreakdowns`.
+  - `GET /api/users` and `GET /api/labourers` return `PagedUsersResponseDto` and `PagedLabourersResponseDto` respectively, with `?all=true` / `?role=Supervisor&all=true` lightweight lookup support strictly for form/filter dropdowns.
+
+### 4.6. Mobile Layout & Date Picker Sizing
 - Date pickers styled across all dashboards with `min-height: 42px !important; height: 42px !important; [color-scheme: dark]` to match button and dropdown heights on iOS Safari and Chrome.
 - Top tab headers use `.horizontal-scroll-container` with `whitespace-nowrap flex-shrink-0` for smooth swipeable navigation.
 

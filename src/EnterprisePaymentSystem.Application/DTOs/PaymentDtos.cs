@@ -4,7 +4,7 @@ namespace EnterprisePaymentSystem.Application.DTOs;
 
 public record CreatePaymentRequest(
     string Title,
-    string Description,
+    string? Description,
     decimal Amount,
     string Currency,
     string Category,
@@ -22,7 +22,7 @@ public record WagePaymentRequest(
     Guid LabourerId,
     Guid SiteId,
     decimal Amount,
-    string Description,
+    string? Description,
     int ExpenseYear,
     DateOnly StartDate,
     DateOnly EndDate
@@ -30,7 +30,7 @@ public record WagePaymentRequest(
 
 public record UpdatePaymentRequest(
     string Title,
-    string Description,
+    string? Description,
     decimal Amount,
     string Currency,
     string Category,
@@ -49,7 +49,9 @@ public record ApprovePaymentRequest(
     Guid? OverrideCategoryId,
     string? NewCategoryName,
     Guid? OverrideSiteId,
-    uint Version
+    uint Version,
+    decimal? ApprovedAmount = null,
+    string? UpdatedDescription = null
 );
 
 public record RequestInfoPaymentRequest(
@@ -97,7 +99,9 @@ public record PaymentResponseDto(
     DateTime CreatedAtUtc,
     DateTime? UpdatedAtUtc,
     uint Version,
-    IReadOnlyList<PaymentAuditLogDto> AuditLogs
+    IReadOnlyList<PaymentAuditLogDto> AuditLogs,
+    decimal RequestedAmount = 0m,
+    decimal? ApprovedAmount = null
 );
 
 public record PaymentAuditLogDto(
@@ -119,5 +123,33 @@ public record PaymentFilterQuery(
     Guid? RequesterId = null,
     string? Search = null,
     DateOnly? StartDate = null,
-    DateOnly? EndDate = null
+    DateOnly? EndDate = null,
+    int Page = 1,
+    int PageSize = 20,
+    bool OnlyMine = false,
+    string? Scope = null
+);
+
+public record PaymentPagedSummaryDto(
+    decimal GrandTotalAmount,
+    decimal TotalApprovedAmount,
+    decimal TotalCompletedAmount,
+    decimal TotalPendingAmount,
+    decimal TotalInfoRequestedAmount,
+    decimal TotalRejectedAmount,
+    int TotalApprovedCount,
+    int TotalCompletedCount,
+    int TotalPendingCount,
+    int TotalInfoRequestedCount,
+    int TotalRejectedCount,
+    IReadOnlyList<CategoryBreakdownDto> CategoryBreakdowns
+);
+
+public record PagedPaymentsResponseDto(
+    IReadOnlyList<PaymentResponseDto> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages,
+    PaymentPagedSummaryDto Summary
 );

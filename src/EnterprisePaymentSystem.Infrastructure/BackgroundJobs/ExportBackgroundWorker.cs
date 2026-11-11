@@ -1,6 +1,7 @@
 using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Interfaces;
 using EnterprisePaymentSystem.Application.Interfaces.Repositories;
+using EnterprisePaymentSystem.Domain.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -64,38 +65,47 @@ public class ExportBackgroundWorker : BackgroundService
                 // Fetch records using repository
                 var payments = await paymentRepository.GetPaymentsForExportAsync(job.TenantId, job.Year, stoppingToken);
 
-                var dtos = payments.Select(p => new PaymentResponseDto(
-                    Id: p.Id,
-                    TenantId: p.TenantId,
-                    UserId: p.UserId,
-                    SubmitterName: p.User?.FullName ?? "Unknown",
-                    SubmitterEmail: p.User?.Email ?? "Unknown",
-                    SubmitterPhone: p.User?.PhoneNumber ?? string.Empty,
-                    Title: p.Title,
-                    Description: p.Description,
-                    Amount: p.Amount,
-                    Currency: p.Currency,
-                    Category: p.Category,
-                    CategoryId: p.CategoryId,
-                    SiteId: p.SiteId,
-                    SiteName: p.Site?.Name,
-                    LabourerId: p.LabourerId,
-                    LabourerName: p.Labourer?.Name,
-                    ExpenseYear: p.ExpenseYear,
-                    StartDate: p.StartDate,
-                    EndDate: p.EndDate,
-                    Status: p.Status,
-                    StatusName: p.Status.ToString(),
-                    InvoiceNumber: p.InvoiceNumber,
-                    ReceiptAttachmentPath: p.ReceiptAttachmentPath,
-                    RejectionReason: p.RejectionReason,
-                    InfoRequestDetails: p.InfoRequestDetails,
-                    ApprovalComments: p.ApprovalComments,
-                    CreatedAtUtc: p.CreatedAtUtc,
-                    UpdatedAtUtc: p.UpdatedAtUtc,
-                    Version: p.Version,
-                    AuditLogs: Array.Empty<PaymentAuditLogDto>()
-                )).ToList();
+                var dtos = payments.Select(p =>
+                {
+                    var requestedAmount = p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount;
+                    var approvedAmount = p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed
+                        ? p.Amount
+                        : (decimal?)null;
+                    return new PaymentResponseDto(
+                        Id: p.Id,
+                        TenantId: p.TenantId,
+                        UserId: p.UserId,
+                        SubmitterName: p.User?.FullName ?? "Unknown",
+                        SubmitterEmail: p.User?.Email ?? "Unknown",
+                        SubmitterPhone: p.User?.PhoneNumber ?? string.Empty,
+                        Title: p.Title,
+                        Description: p.Description,
+                        Amount: p.Amount,
+                        Currency: p.Currency,
+                        Category: p.Category,
+                        CategoryId: p.CategoryId,
+                        SiteId: p.SiteId,
+                        SiteName: p.Site?.Name,
+                        LabourerId: p.LabourerId,
+                        LabourerName: p.Labourer?.Name,
+                        ExpenseYear: p.ExpenseYear,
+                        StartDate: p.StartDate,
+                        EndDate: p.EndDate,
+                        Status: p.Status,
+                        StatusName: p.Status.ToString(),
+                        InvoiceNumber: p.InvoiceNumber,
+                        ReceiptAttachmentPath: p.ReceiptAttachmentPath,
+                        RejectionReason: p.RejectionReason,
+                        InfoRequestDetails: p.InfoRequestDetails,
+                        ApprovalComments: p.ApprovalComments,
+                        CreatedAtUtc: p.CreatedAtUtc,
+                        UpdatedAtUtc: p.UpdatedAtUtc,
+                        Version: p.Version,
+                        AuditLogs: Array.Empty<PaymentAuditLogDto>(),
+                        RequestedAmount: requestedAmount,
+                        ApprovedAmount: approvedAmount
+                    );
+                }).ToList();
 
                 // ClosedXML Generation
                 var excelBytes = excelService.GenerateExpensesExcel(dtos, job.TenantName, job.Year);

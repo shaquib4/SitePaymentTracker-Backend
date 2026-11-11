@@ -114,6 +114,7 @@ CREATE TABLE public."PaymentRequests" (
     "SiteId" uuid,
     "Title" character varying(150) NOT NULL,
     "Description" character varying(1000) NOT NULL,
+    "RequestedAmount" numeric(14,2) DEFAULT 0 NOT NULL,
     "Amount" numeric(14,2) NOT NULL,
     "Currency" character varying(3) NOT NULL,
     "ExpenseYear" integer NOT NULL,

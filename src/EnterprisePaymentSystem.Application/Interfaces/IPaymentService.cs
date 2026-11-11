@@ -8,7 +8,7 @@ public interface IPaymentService
     Task<PaymentResponseDto> CreateWageRequestAsync(WagePaymentRequest request, CancellationToken ct = default);
     Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequest request, CancellationToken ct = default);
     Task<PaymentResponseDto?> GetByIdAsync(Guid id, CancellationToken ct = default);
-    Task<IReadOnlyList<PaymentResponseDto>> GetListAsync(PaymentFilterQuery query, CancellationToken ct = default);
+    Task<PagedPaymentsResponseDto> GetListAsync(PaymentFilterQuery query, CancellationToken ct = default);
     Task<PaymentResponseDto> SubmitAsync(Guid id, string? comments = null, CancellationToken ct = default);
     Task<PaymentResponseDto> RequestInfoAsync(Guid id, RequestInfoPaymentRequest request, CancellationToken ct = default);
     Task<PaymentResponseDto> ApproveAsync(Guid id, ApprovePaymentRequest request, CancellationToken ct = default);

@@ -33,7 +33,7 @@ public class PaymentsController : ControllerBase
     /// Accountants are restricted to the current active calendar year only.
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<PaymentResponseDto>>> GetList(
+    public async Task<ActionResult<PagedPaymentsResponseDto>> GetList(
         [FromQuery] PaymentFilterQuery query,
         CancellationToken ct)
     {

@@ -1,4 +1,5 @@
 using EnterprisePaymentSystem.Application.DTOs;
+using EnterprisePaymentSystem.Application.Helpers;
 using EnterprisePaymentSystem.Application.Interfaces;
 using EnterprisePaymentSystem.Application.Interfaces.Repositories;
 using EnterprisePaymentSystem.Domain.Enums;
@@ -59,53 +60,24 @@ public class ExportBackgroundWorker : BackgroundService
                 _queue.UpdateJobStatus(job.JobId, ExportJobStatus.Processing);
 
                 using var scope = _serviceProvider.CreateScope();
+
+                if (job.IsAuditPack)
+                {
+                    var processor = scope.ServiceProvider.GetRequiredService<IAuditReportJobProcessor>();
+                    await processor.ProcessAuditPackJobAsync(job, stoppingToken);
+
+                    var auditUrl = $"/api/reports/admin-files/{job.AuditReportJobId}/download/pdf";
+                    _queue.UpdateJobStatus(job.JobId, ExportJobStatus.Completed, auditUrl);
+                    _logger.LogInformation("Completed Admin Audit Pack job {JobId}. Files persisted and email notification handled.", job.JobId);
+                    continue;
+                }
+
                 var paymentRepository = scope.ServiceProvider.GetRequiredService<IPaymentRepository>();
                 var excelService = scope.ServiceProvider.GetRequiredService<IExcelExportService>();
 
                 // Fetch records using repository
                 var payments = await paymentRepository.GetPaymentsForExportAsync(job.TenantId, job.Year, stoppingToken);
-
-                var dtos = payments.Select(p =>
-                {
-                    var requestedAmount = p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount;
-                    var approvedAmount = p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed
-                        ? p.Amount
-                        : (decimal?)null;
-                    return new PaymentResponseDto(
-                        Id: p.Id,
-                        TenantId: p.TenantId,
-                        UserId: p.UserId,
-                        SubmitterName: p.User?.FullName ?? "Unknown",
-                        SubmitterEmail: p.User?.Email ?? "Unknown",
-                        SubmitterPhone: p.User?.PhoneNumber ?? string.Empty,
-                        Title: p.Title,
-                        Description: p.Description,
-                        Amount: p.Amount,
-                        Currency: p.Currency,
-                        Category: p.Category,
-                        CategoryId: p.CategoryId,
-                        SiteId: p.SiteId,
-                        SiteName: p.Site?.Name,
-                        LabourerId: p.LabourerId,
-                        LabourerName: p.Labourer?.Name,
-                        ExpenseYear: p.ExpenseYear,
-                        StartDate: p.StartDate,
-                        EndDate: p.EndDate,
-                        Status: p.Status,
-                        StatusName: p.Status.ToString(),
-                        InvoiceNumber: p.InvoiceNumber,
-                        ReceiptAttachmentPath: p.ReceiptAttachmentPath,
-                        RejectionReason: p.RejectionReason,
-                        InfoRequestDetails: p.InfoRequestDetails,
-                        ApprovalComments: p.ApprovalComments,
-                        CreatedAtUtc: p.CreatedAtUtc,
-                        UpdatedAtUtc: p.UpdatedAtUtc,
-                        Version: p.Version,
-                        AuditLogs: Array.Empty<PaymentAuditLogDto>(),
-                        RequestedAmount: requestedAmount,
-                        ApprovedAmount: approvedAmount
-                    );
-                }).ToList();
+                var dtos = payments.Select(PaymentMapper.MapToDto).ToList();
 
                 // ClosedXML Generation
                 var excelBytes = excelService.GenerateExpensesExcel(dtos, job.TenantName, job.Year);

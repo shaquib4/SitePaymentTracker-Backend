@@ -14,6 +14,7 @@ public interface IApplicationDbContext
     DbSet<Labourer> Labourers { get; }
     DbSet<MeasurementBook> MeasurementBooks { get; }
     DbSet<PeriodAccessRequest> PeriodAccessRequests { get; }
+    DbSet<AuditReportJob> AuditReportJobs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

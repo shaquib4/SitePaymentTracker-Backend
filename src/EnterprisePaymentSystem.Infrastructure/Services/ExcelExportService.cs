@@ -7,13 +7,21 @@ namespace EnterprisePaymentSystem.Infrastructure.Services;
 public class ExcelExportService : IExcelExportService
 {
     public byte[] GenerateExpensesExcel(IReadOnlyList<PaymentResponseDto> payments, string tenantName, int year)
+        => GenerateAuditExpensesExcel(payments, tenantName, year, $"FY {year}", "All Records");
+
+    public byte[] GenerateAuditExpensesExcel(
+        IReadOnlyList<PaymentResponseDto> payments,
+        string tenantName,
+        int year,
+        string periodLabel,
+        string filterSummary)
     {
         using var workbook = new XLWorkbook();
         var worksheet = workbook.Worksheets.Add($"Expenses {year}");
 
-        // Title Block
-        worksheet.Cell("A1").Value = $"{tenantName} - Payment & Expense Report ({year})";
-        worksheet.Range("A1:M1").Merge();
+        // Title Block (14 columns: A..N)
+        worksheet.Cell("A1").Value = $"{tenantName} - Payment & Expense Audit Ledger ({year})";
+        worksheet.Range("A1:N1").Merge();
         worksheet.Cell("A1").Style.Font.Bold = true;
         worksheet.Cell("A1").Style.Font.FontSize = 14;
         worksheet.Cell("A1").Style.Font.FontColor = XLColor.White;
@@ -21,9 +29,11 @@ public class ExcelExportService : IExcelExportService
         worksheet.Cell("A1").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         worksheet.Row(1).Height = 28;
 
-        // Subtitle / Generated metadata
-        worksheet.Cell("A2").Value = $"Generated on: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC | Total Records: {payments.Count}";
-        worksheet.Range("A2:M2").Merge();
+        // Subtitle / Period & Filter metadata
+        var normalizedFilter = string.IsNullOrWhiteSpace(filterSummary) ? "All Records" : filterSummary;
+        worksheet.Cell("A2").Value =
+            $"Period: {periodLabel} | Filters: {normalizedFilter} | Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC | Total Records: {payments.Count}";
+        worksheet.Range("A2:N2").Merge();
         worksheet.Cell("A2").Style.Font.Italic = true;
         worksheet.Cell("A2").Style.Font.FontSize = 9;
         worksheet.Cell("A2").Style.Font.FontColor = XLColor.White;
@@ -37,6 +47,7 @@ public class ExcelExportService : IExcelExportService
             "Request ID",
             "Submitted By",
             "Email",
+            "Site / Project",
             "Title",
             "Description",
             "Category",
@@ -65,20 +76,20 @@ public class ExcelExportService : IExcelExportService
         int currentRow = 5;
         foreach (var p in payments)
         {
-            worksheet.Cell(currentRow, 1).Value = p.Id.ToString().Substring(0, 8) + "...";
+            worksheet.Cell(currentRow, 1).Value = p.Id.ToString()[..8] + "...";
             worksheet.Cell(currentRow, 2).Value = p.SubmitterName;
             worksheet.Cell(currentRow, 3).Value = p.SubmitterEmail;
-            worksheet.Cell(currentRow, 4).Value = p.Title;
-            worksheet.Cell(currentRow, 5).Value = string.IsNullOrWhiteSpace(p.Description) ? "-" : p.Description;
-            worksheet.Cell(currentRow, 6).Value = p.Category;
+            worksheet.Cell(currentRow, 4).Value = string.IsNullOrWhiteSpace(p.SiteName) ? "Head Office / General" : p.SiteName;
+            worksheet.Cell(currentRow, 5).Value = p.Title;
+            worksheet.Cell(currentRow, 6).Value = string.IsNullOrWhiteSpace(p.Description) ? "-" : p.Description;
+            worksheet.Cell(currentRow, 7).Value = p.Category;
 
-            // Strict financial formatting (Requested vs Approved)
-            var reqAmountCell = worksheet.Cell(currentRow, 7);
+            var reqAmountCell = worksheet.Cell(currentRow, 8);
             reqAmountCell.Value = p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount;
             reqAmountCell.Style.NumberFormat.Format = "#,##0.00";
             reqAmountCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
 
-            var apprAmountCell = worksheet.Cell(currentRow, 8);
+            var apprAmountCell = worksheet.Cell(currentRow, 9);
             if (p.ApprovedAmount.HasValue)
             {
                 apprAmountCell.Value = p.ApprovedAmount.Value;
@@ -90,24 +101,23 @@ public class ExcelExportService : IExcelExportService
             }
             apprAmountCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
 
-            worksheet.Cell(currentRow, 9).Value = p.Currency;
-            worksheet.Cell(currentRow, 10).Value = p.StartDate.ToString("yyyy-MM-dd");
-            worksheet.Cell(currentRow, 11).Value = p.EndDate.ToString("yyyy-MM-dd");
+            worksheet.Cell(currentRow, 10).Value = p.Currency;
+            worksheet.Cell(currentRow, 11).Value = p.StartDate.ToString("yyyy-MM-dd");
+            worksheet.Cell(currentRow, 12).Value = p.EndDate.ToString("yyyy-MM-dd");
 
-            var statusCell = worksheet.Cell(currentRow, 12);
+            var statusCell = worksheet.Cell(currentRow, 13);
             statusCell.Value = p.StatusName;
             statusCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             ApplyStatusColor(statusCell, p.StatusName);
 
-            worksheet.Cell(currentRow, 13).Value = p.InvoiceNumber ?? "-";
+            worksheet.Cell(currentRow, 14).Value = p.InvoiceNumber ?? "-";
 
-            // Light zebra striping
             if (currentRow % 2 == 0)
             {
-                worksheet.Range(currentRow, 1, currentRow, 13).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8fafc");
+                worksheet.Range(currentRow, 1, currentRow, 14).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8fafc");
             }
 
-            for (int col = 1; col <= 13; col++)
+            for (int col = 1; col <= 14; col++)
             {
                 worksheet.Cell(currentRow, col).Style.Border.OutsideBorder = XLBorderStyleValues.Hair;
             }
@@ -118,27 +128,27 @@ public class ExcelExportService : IExcelExportService
         // Summary Formula Row
         if (payments.Count > 0)
         {
-            worksheet.Cell(currentRow, 6).Value = "Totals:";
-            worksheet.Cell(currentRow, 6).Style.Font.Bold = true;
-            worksheet.Cell(currentRow, 6).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+            worksheet.Cell(currentRow, 7).Value = "Totals:";
+            worksheet.Cell(currentRow, 7).Style.Font.Bold = true;
+            worksheet.Cell(currentRow, 7).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
 
-            var reqSumCell = worksheet.Cell(currentRow, 7);
-            reqSumCell.FormulaA1 = $"SUM(G5:G{currentRow - 1})";
+            var reqSumCell = worksheet.Cell(currentRow, 8);
+            reqSumCell.FormulaA1 = $"SUM(H5:H{currentRow - 1})";
             reqSumCell.Style.Font.Bold = true;
             reqSumCell.Style.NumberFormat.Format = "#,##0.00";
             reqSumCell.Style.Border.TopBorder = XLBorderStyleValues.Thin;
             reqSumCell.Style.Border.BottomBorder = XLBorderStyleValues.Double;
             reqSumCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#e0e7ff");
 
-            var apprSumCell = worksheet.Cell(currentRow, 8);
-            apprSumCell.FormulaA1 = $"SUM(H5:H{currentRow - 1})";
+            var apprSumCell = worksheet.Cell(currentRow, 9);
+            apprSumCell.FormulaA1 = $"SUM(I5:I{currentRow - 1})";
             apprSumCell.Style.Font.Bold = true;
             apprSumCell.Style.NumberFormat.Format = "#,##0.00";
             apprSumCell.Style.Border.TopBorder = XLBorderStyleValues.Thin;
             apprSumCell.Style.Border.BottomBorder = XLBorderStyleValues.Double;
             apprSumCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#dcfce7");
 
-            worksheet.Range(currentRow, 1, currentRow, 13).Style.Font.Bold = true;
+            worksheet.Range(currentRow, 1, currentRow, 14).Style.Font.Bold = true;
         }
 
         worksheet.Columns().AdjustToContents(10, 45);
@@ -156,13 +166,19 @@ public class ExcelExportService : IExcelExportService
                 cell.Style.Font.FontColor = XLColor.FromHtml("#166534");
                 cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#dcfce7");
                 break;
+            case "Completed":
             case "Paid":
                 cell.Style.Font.FontColor = XLColor.FromHtml("#1e40af");
                 cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#dbeafe");
                 break;
+            case "Pending":
             case "PendingApproval":
                 cell.Style.Font.FontColor = XLColor.FromHtml("#854d0e");
                 cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#fef9c3");
+                break;
+            case "InfoRequested":
+                cell.Style.Font.FontColor = XLColor.FromHtml("#6b21a8");
+                cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#f3e8ff");
                 break;
             case "Rejected":
                 cell.Style.Font.FontColor = XLColor.FromHtml("#991b1b");

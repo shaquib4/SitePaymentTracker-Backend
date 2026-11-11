@@ -26,6 +26,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<Labourer> Labourers => Set<Labourer>();
     public DbSet<MeasurementBook> MeasurementBooks => Set<MeasurementBook>();
     public DbSet<PeriodAccessRequest> PeriodAccessRequests => Set<PeriodAccessRequest>();
+    public DbSet<AuditReportJob> AuditReportJobs => Set<AuditReportJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -54,6 +55,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             CurrentTenantId == null || e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<PeriodAccessRequest>().HasQueryFilter(e =>
+            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+
+        modelBuilder.Entity<AuditReportJob>().HasQueryFilter(e =>
             CurrentTenantId == null || e.TenantId == CurrentTenantId);
 
         // Tenant Configuration
@@ -189,6 +193,30 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             b.Property(a => a.Comments).HasMaxLength(500);
 
             b.HasIndex(a => new { a.TenantId, a.PaymentRequestId });
+        });
+
+        // AuditReportJob Configuration
+        modelBuilder.Entity<AuditReportJob>(b =>
+        {
+            b.HasKey(j => j.Id);
+            b.Property(j => j.RequestedByName).HasMaxLength(150);
+            b.Property(j => j.RequestedByEmail).HasMaxLength(200);
+            b.Property(j => j.ReportTitle).HasMaxLength(200);
+            b.Property(j => j.PeriodLabel).HasMaxLength(200);
+            b.Property(j => j.FilterSummary).HasMaxLength(500);
+            b.Property(j => j.StatusFilter).HasMaxLength(50);
+            b.Property(j => j.CategoryFilter).HasMaxLength(100);
+            b.Property(j => j.SiteName).HasMaxLength(150);
+            b.Property(j => j.SearchFilter).HasMaxLength(200);
+            b.Property(j => j.TotalRequestedAmount).HasPrecision(14, 2);
+            b.Property(j => j.TotalApprovedAmount).HasPrecision(14, 2);
+            b.Property(j => j.PdfFileName).HasMaxLength(250);
+            b.Property(j => j.ExcelFileName).HasMaxLength(250);
+            b.Property(j => j.DownloadToken).HasMaxLength(100);
+            b.Property(j => j.EmailDeliveryNote).HasMaxLength(500);
+            b.Property(j => j.ErrorMessage).HasMaxLength(1000);
+
+            b.HasIndex(j => new { j.TenantId, j.QueuedAtUtc });
         });
     }
 

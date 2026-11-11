@@ -12,6 +12,23 @@ public class ExportReportRequestValidator : AbstractValidator<ExportReportReques
     }
 }
 
+public class AdminAuditPackRequestValidator : AbstractValidator<AdminAuditPackRequest>
+{
+    public AdminAuditPackRequestValidator()
+    {
+        RuleFor(x => x.Year)
+            .InclusiveBetween(2000, 2100).WithMessage("Year must be between 2000 and 2100.");
+        RuleFor(x => x.EndDate)
+            .GreaterThanOrEqualTo(x => x.StartDate!.Value)
+            .When(x => x.StartDate.HasValue && x.EndDate.HasValue)
+            .WithMessage("EndDate must be on or after StartDate.");
+        RuleFor(x => x.RecipientEmail)
+            .EmailAddress()
+            .When(x => !string.IsNullOrWhiteSpace(x.RecipientEmail))
+            .WithMessage("RecipientEmail must be a valid email address.");
+    }
+}
+
 public class PaymentFilterQueryValidator : AbstractValidator<PaymentFilterQuery>
 {
     public PaymentFilterQueryValidator()

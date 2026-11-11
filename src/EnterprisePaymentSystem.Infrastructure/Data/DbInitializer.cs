@@ -27,6 +27,40 @@ public static class DbInitializer
             await context.Database.ExecuteSqlRawAsync("""
                 ALTER TABLE "PaymentRequests" ADD COLUMN IF NOT EXISTS "RequestedAmount" numeric(14,2) NOT NULL DEFAULT 0;
                 UPDATE "PaymentRequests" SET "RequestedAmount" = "Amount" WHERE "RequestedAmount" = 0 AND "Amount" > 0;
+
+                CREATE TABLE IF NOT EXISTS "AuditReportJobs" (
+                    "Id" uuid NOT NULL PRIMARY KEY,
+                    "TenantId" uuid NOT NULL,
+                    "RequestedByUserId" uuid NOT NULL,
+                    "RequestedByName" character varying(150) NOT NULL DEFAULT '',
+                    "RequestedByEmail" character varying(200) NOT NULL DEFAULT '',
+                    "ReportTitle" character varying(200) NOT NULL DEFAULT '',
+                    "PeriodLabel" character varying(200) NOT NULL DEFAULT '',
+                    "FilterSummary" character varying(500) NOT NULL DEFAULT '',
+                    "Year" integer NOT NULL,
+                    "StartDate" date NULL,
+                    "EndDate" date NULL,
+                    "StatusFilter" character varying(50) NULL,
+                    "CategoryFilter" character varying(100) NULL,
+                    "SiteId" uuid NULL,
+                    "SiteName" character varying(150) NULL,
+                    "SearchFilter" character varying(200) NULL,
+                    "Status" integer NOT NULL DEFAULT 0,
+                    "TotalRecords" integer NOT NULL DEFAULT 0,
+                    "TotalRequestedAmount" numeric(14,2) NOT NULL DEFAULT 0,
+                    "TotalApprovedAmount" numeric(14,2) NOT NULL DEFAULT 0,
+                    "PdfFileName" character varying(250) NOT NULL DEFAULT '',
+                    "ExcelFileName" character varying(250) NOT NULL DEFAULT '',
+                    "PdfBytes" bytea NULL,
+                    "ExcelBytes" bytea NULL,
+                    "DownloadToken" character varying(100) NOT NULL DEFAULT '',
+                    "EmailDispatched" boolean NOT NULL DEFAULT false,
+                    "EmailDeliveryNote" character varying(500) NULL,
+                    "QueuedAtUtc" timestamp with time zone NOT NULL,
+                    "CompletedAtUtc" timestamp with time zone NULL,
+                    "ErrorMessage" character varying(1000) NULL
+                );
+                CREATE INDEX IF NOT EXISTS "IX_AuditReportJobs_TenantId_QueuedAtUtc" ON "AuditReportJobs" ("TenantId", "QueuedAtUtc" DESC);
                 """);
         }
 

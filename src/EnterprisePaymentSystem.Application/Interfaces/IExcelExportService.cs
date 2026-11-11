@@ -5,4 +5,11 @@ namespace EnterprisePaymentSystem.Application.Interfaces;
 public interface IExcelExportService
 {
     byte[] GenerateExpensesExcel(IReadOnlyList<PaymentResponseDto> payments, string tenantName, int year);
+
+    byte[] GenerateAuditExpensesExcel(
+        IReadOnlyList<PaymentResponseDto> payments,
+        string tenantName,
+        int year,
+        string periodLabel,
+        string filterSummary);
 }

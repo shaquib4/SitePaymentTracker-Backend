@@ -75,53 +75,174 @@ public class PaymentRepository : IPaymentRepository
         var page = Math.Max(1, query.Page);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
 
-        var baseQuery = _context.PaymentRequests
+        var baseQuery = ApplyCommonFilters(
+            _context.PaymentRequests.AsNoTracking(),
+            query.Year,
+            query.SiteId,
+            query.StartDate,
+            query.EndDate,
+            query.Search,
+            userIdFilter,
+            query.Scope);
+
+        var summaryQuery = query.Status.HasValue
+            ? baseQuery.Where(p => p.Status == query.Status.Value)
+            : baseQuery;
+
+        var summary = await ComputeSummaryAsync(summaryQuery, query.Status, ct);
+
+        var pagedQuery = summaryQuery;
+        if (!string.IsNullOrWhiteSpace(query.Category))
+        {
+            var cat = query.Category.Trim();
+            pagedQuery = pagedQuery.Where(p => p.Category == cat);
+        }
+
+        var totalCount = await pagedQuery.CountAsync(ct);
+        var totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)pageSize);
+
+        var items = await pagedQuery
+            .OrderByDescending(p => p.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Include(p => p.User)
+            .Include(p => p.Site)
+            .Include(p => p.Labourer)
+            .Include(p => p.AuditLogs)
+            .ToListAsync(ct);
+
+        return new PagedPaymentEntitiesResult(
+            Items: items,
+            Page: page,
+            PageSize: pageSize,
+            TotalCount: totalCount,
+            TotalPages: totalPages,
+            Summary: summary
+        );
+    }
+
+    public async Task<AuditExportDataResult> GetAuditExportDataAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
+        CancellationToken ct = default)
+    {
+        // Background worker executes outside HTTP tenant scope; IgnoreQueryFilters + explicit TenantId predicate.
+        var tenantScoped = _context.PaymentRequests
+            .IgnoreQueryFilters()
             .AsNoTracking()
-            .Where(p => p.ExpenseYear == query.Year);
+            .Where(p => p.TenantId == tenantId);
+
+        var filtered = ApplyCommonFilters(
+            tenantScoped,
+            filter.Year,
+            filter.SiteId,
+            filter.StartDate,
+            filter.EndDate,
+            filter.Search,
+            userIdFilter: null,
+            scope: null);
+
+        if (filter.Status.HasValue)
+        {
+            filtered = filtered.Where(p => p.Status == filter.Status.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Category))
+        {
+            var cat = filter.Category.Trim();
+            filtered = filtered.Where(p => p.Category == cat);
+        }
+
+        var summary = await ComputeSummaryAsync(filtered, filter.Status, ct);
+
+        var items = await filtered
+            .OrderByDescending(p => p.StartDate)
+            .ThenByDescending(p => p.CreatedAtUtc)
+            .Include(p => p.User)
+            .Include(p => p.Site)
+            .Include(p => p.Labourer)
+            .ToListAsync(ct);
+
+        var totalRequestedAmount = items.Sum(p => p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount);
+        var totalApprovedAmount = items
+            .Where(p => p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed)
+            .Sum(p => p.Amount);
+
+        string? siteName = null;
+        if (filter.SiteId.HasValue)
+        {
+            siteName = await _context.Sites
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(s => s.TenantId == tenantId && s.Id == filter.SiteId.Value)
+                .Select(s => s.Name)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return new AuditExportDataResult(
+            Items: items,
+            Summary: summary,
+            TotalRequestedAmount: totalRequestedAmount,
+            TotalApprovedAmount: totalApprovedAmount,
+            SiteName: siteName
+        );
+    }
+
+    private static IQueryable<PaymentRequest> ApplyCommonFilters(
+        IQueryable<PaymentRequest> source,
+        int year,
+        Guid? siteId,
+        DateOnly? startDate,
+        DateOnly? endDate,
+        string? search,
+        Guid? userIdFilter,
+        string? scope)
+    {
+        var query = source.Where(p => p.ExpenseYear == year);
 
         if (userIdFilter.HasValue)
         {
-            baseQuery = baseQuery.Where(p => p.UserId == userIdFilter.Value);
+            query = query.Where(p => p.UserId == userIdFilter.Value);
         }
 
-        if (query.SiteId.HasValue)
+        if (siteId.HasValue)
         {
-            baseQuery = baseQuery.Where(p => p.SiteId == query.SiteId.Value);
+            query = query.Where(p => p.SiteId == siteId.Value);
         }
 
-        if (query.StartDate.HasValue)
+        if (startDate.HasValue)
         {
-            baseQuery = baseQuery.Where(p => p.StartDate >= query.StartDate.Value);
+            query = query.Where(p => p.StartDate >= startDate.Value);
         }
 
-        if (query.EndDate.HasValue)
+        if (endDate.HasValue)
         {
-            baseQuery = baseQuery.Where(p => p.EndDate <= query.EndDate.Value);
+            query = query.Where(p => p.EndDate <= endDate.Value);
         }
 
-        if (!string.IsNullOrWhiteSpace(query.Scope))
+        if (!string.IsNullOrWhiteSpace(scope))
         {
-            var scope = query.Scope.Trim().ToLower();
-            if (scope == "wage_requests")
+            var normalizedScope = scope.Trim().ToLower();
+            if (normalizedScope == "wage_requests")
             {
-                baseQuery = baseQuery.Where(p => p.LabourerId != null);
+                query = query.Where(p => p.LabourerId != null);
             }
-            else if (scope == "material_requests")
+            else if (normalizedScope == "material_requests")
             {
-                baseQuery = baseQuery.Where(p => p.LabourerId == null);
+                query = query.Where(p => p.LabourerId == null);
             }
-            else if (scope == "my_wages")
+            else if (normalizedScope == "my_wages")
             {
-                baseQuery = baseQuery.Where(p =>
+                query = query.Where(p =>
                     p.LabourerId == null &&
                     (p.Category.Contains("Wage") || p.Category.Contains("Salary") || p.Category.Contains("Supervisor")));
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(query.Search))
+        if (!string.IsNullOrWhiteSpace(search))
         {
-            var s = query.Search.Trim().ToLower();
-            baseQuery = baseQuery.Where(p =>
+            var s = search.Trim().ToLower();
+            query = query.Where(p =>
                 (p.Title != null && p.Title.ToLower().Contains(s)) ||
                 (p.Description != null && p.Description.ToLower().Contains(s)) ||
                 (p.Category != null && p.Category.ToLower().Contains(s)) ||
@@ -132,13 +253,14 @@ public class PaymentRepository : IPaymentRepository
                 (p.Labourer != null && p.Labourer.Name != null && p.Labourer.Name.ToLower().Contains(s)));
         }
 
-        var summaryQuery = baseQuery;
-        if (query.Status.HasValue)
-        {
-            summaryQuery = summaryQuery.Where(p => p.Status == query.Status.Value);
-        }
+        return query;
+    }
 
-        // Database-level status aggregates across all matching rows (even 100k+)
+    private static async Task<PaymentPagedSummaryDto> ComputeSummaryAsync(
+        IQueryable<PaymentRequest> summaryQuery,
+        PaymentStatus? statusFilter,
+        CancellationToken ct)
+    {
         var statusGroups = await summaryQuery
             .GroupBy(p => p.Status)
             .Select(g => new
@@ -181,10 +303,8 @@ public class PaymentRepository : IPaymentRepository
 
         var grandTotalAmount = approvedAmt + completedAmt + pendingAmt + infoAmt + rejectedAmt;
 
-        // Pie chart category breakdowns reflect active status filter if specified;
-        // otherwise prioritize Approved + Completed and fall back to all statuses if none.
         var pieQuery = summaryQuery;
-        if (!query.Status.HasValue && (approvedCount + completedCount) > 0)
+        if (!statusFilter.HasValue && (approvedCount + completedCount) > 0)
         {
             pieQuery = pieQuery.Where(p =>
                 p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed);
@@ -208,7 +328,7 @@ public class PaymentRepository : IPaymentRepository
                 c.TotalAmount))
             .ToList();
 
-        var summary = new PaymentPagedSummaryDto(
+        return new PaymentPagedSummaryDto(
             GrandTotalAmount: grandTotalAmount,
             TotalApprovedAmount: approvedAmt,
             TotalCompletedAmount: completedAmt,
@@ -221,35 +341,6 @@ public class PaymentRepository : IPaymentRepository
             TotalInfoRequestedCount: infoCount,
             TotalRejectedCount: rejectedCount,
             CategoryBreakdowns: categoryBreakdowns
-        );
-
-        var pagedQuery = summaryQuery;
-        if (!string.IsNullOrWhiteSpace(query.Category))
-        {
-            var cat = query.Category.Trim();
-            pagedQuery = pagedQuery.Where(p => p.Category == cat);
-        }
-
-        var totalCount = await pagedQuery.CountAsync(ct);
-        var totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)pageSize);
-
-        var items = await pagedQuery
-            .OrderByDescending(p => p.CreatedAtUtc)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Include(p => p.User)
-            .Include(p => p.Site)
-            .Include(p => p.Labourer)
-            .Include(p => p.AuditLogs)
-            .ToListAsync(ct);
-
-        return new PagedPaymentEntitiesResult(
-            Items: items,
-            Page: page,
-            PageSize: pageSize,
-            TotalCount: totalCount,
-            TotalPages: totalPages,
-            Summary: summary
         );
     }
 

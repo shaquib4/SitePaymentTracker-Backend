@@ -7,8 +7,11 @@ using EnterprisePaymentSystem.Domain.Enums;
 using EnterprisePaymentSystem.Domain.Exceptions;
 using EnterprisePaymentSystem.Infrastructure.Data;
 using EnterprisePaymentSystem.Infrastructure.Repositories;
+using EnterprisePaymentSystem.Infrastructure.Services;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace EnterprisePaymentSystem.UnitTests;
@@ -590,6 +593,226 @@ public class RepositoryAndServiceTests
             result.Amount.Should().Be(3200m);
             result.Description.Should().Be("Edited freight note");
             result.Version.Should().Be(1u);
+        }
+    }
+
+    [Fact]
+    public void PdfBreakdownExportService_ShouldGenerateValidBreakdownPdf()
+    {
+        var service = new PdfBreakdownExportService();
+        var summary = new PaymentPagedSummaryDto(
+            GrandTotalAmount: 125000m,
+            TotalApprovedAmount: 65000m,
+            TotalCompletedAmount: 40000m,
+            TotalPendingAmount: 15000m,
+            TotalInfoRequestedAmount: 5000m,
+            TotalRejectedAmount: 0m,
+            TotalApprovedCount: 3,
+            TotalCompletedCount: 2,
+            TotalPendingCount: 2,
+            TotalInfoRequestedCount: 1,
+            TotalRejectedCount: 0,
+            CategoryBreakdowns: new[]
+            {
+                new CategoryBreakdownDto("Material Supply", 3, 60000m),
+                new CategoryBreakdownDto("Labour Wages", 2, 45000m)
+            }
+        );
+
+        var bytes = service.GenerateBreakdownPdf(new PdfBreakdownContext(
+            JobReference: "ABCD1234",
+            TenantName: "Khan Enterprises",
+            ReportTitle: "Q2 FY 2026 Breakdown Audit",
+            PeriodLabel: "2026-04-01 to 2026-06-30 (FY 2026)",
+            FilterSummary: "Status: Approved • Site: Metro Phase II",
+            PreparedByName: "Shaquib Khan",
+            PreparedByEmail: "admin@khanenterprises.com",
+            SiteName: "Metro Phase II",
+            StatusFilter: "Approved",
+            CategoryFilter: null,
+            ExcelFileName: "FY2026_Expenses.xlsx",
+            TotalRecords: 8,
+            TotalRequestedAmount: 132000m,
+            TotalApprovedAmount: 105000m,
+            Summary: summary,
+            GeneratedAtUtc: DateTime.UtcNow
+        ));
+
+        bytes.Should().NotBeNull();
+        bytes.Length.Should().BeGreaterThan(1500);
+        // Starts with "%PDF-"
+        bytes[0].Should().Be(0x25);
+        bytes[1].Should().Be(0x50);
+        bytes[2].Should().Be(0x44);
+        bytes[3].Should().Be(0x46);
+    }
+
+    [Fact]
+    public async Task AuditReportJobProcessor_ProcessAuditPackJobAsync_ShouldPersistPdfExcelAndDispatchEmail()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var siteId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        var employeeId = Guid.NewGuid();
+
+        using (var setupContext = CreateInMemoryDbContext(dbName, _tenantA))
+        {
+            await setupContext.Tenants.AddAsync(new Tenant
+            {
+                Id = _tenantA,
+                Name = "Khan Enterprises",
+                SubscriptionPlan = "Enterprise",
+                Currency = "INR",
+                IsActive = true
+            });
+
+            await setupContext.Sites.AddAsync(new Site
+            {
+                Id = siteId,
+                TenantId = _tenantA,
+                Name = "Expressway Package 4",
+                Location = "Pune",
+                IsActive = true
+            });
+
+            await setupContext.Users.AddAsync(new User
+            {
+                Id = employeeId,
+                TenantId = _tenantA,
+                FullName = "Site Engineer",
+                Email = "engineer@khanenterprises.com",
+                PhoneNumber = "+919000000001",
+                SixDigitUserId = "300001"
+            });
+
+            // Inside Q1 range -> should match
+            await setupContext.PaymentRequests.AddAsync(new PaymentRequest
+            {
+                Id = Guid.NewGuid(),
+                TenantId = _tenantA,
+                UserId = employeeId,
+                SiteId = siteId,
+                Title = "Cement Bags Batch #1",
+                Description = "500 bags OPC 53 grade",
+                Category = "Material Supply",
+                RequestedAmount = 5000m,
+                Amount = 4500m,
+                Currency = "INR",
+                ExpenseYear = 2026,
+                StartDate = new DateOnly(2026, 2, 10),
+                EndDate = new DateOnly(2026, 2, 12),
+                Status = PaymentStatus.Approved,
+                Version = 2u
+            });
+
+            // Outside Q1 range (Q3) -> must be excluded by period filter
+            await setupContext.PaymentRequests.AddAsync(new PaymentRequest
+            {
+                Id = Guid.NewGuid(),
+                TenantId = _tenantA,
+                UserId = employeeId,
+                SiteId = siteId,
+                Title = "Bitumen Supply",
+                Category = "Material Supply",
+                RequestedAmount = 9000m,
+                Amount = 9000m,
+                Currency = "INR",
+                ExpenseYear = 2026,
+                StartDate = new DateOnly(2026, 8, 1),
+                EndDate = new DateOnly(2026, 8, 2),
+                Status = PaymentStatus.Approved,
+                Version = 1u
+            });
+
+            await setupContext.AuditReportJobs.AddAsync(new AuditReportJob
+            {
+                Id = jobId,
+                TenantId = _tenantA,
+                RequestedByUserId = _userA,
+                RequestedByName = "Shaquib Khan",
+                RequestedByEmail = "admin@khanenterprises.com",
+                ReportTitle = "Q1 Expressway Audit Pack",
+                PeriodLabel = "2026-01-01 to 2026-03-31 (FY 2026)",
+                FilterSummary = "Site: Expressway Package 4",
+                Year = 2026,
+                StartDate = new DateOnly(2026, 1, 1),
+                EndDate = new DateOnly(2026, 3, 31),
+                SiteId = siteId,
+                Status = AuditReportStatus.Queued,
+                DownloadToken = "secure-test-token-123"
+            });
+
+            await setupContext.SaveChangesAsync();
+        }
+
+        using (var workerContext = CreateInMemoryDbContext(dbName, null))
+        {
+            var repo = new PaymentRepository(workerContext);
+            var pdfService = new PdfBreakdownExportService();
+            var excelService = new ExcelExportService();
+            var emailMock = new Mock<IEmailService>();
+            emailMock
+                .Setup(e => e.SendAuditReportReadyEmailAsync(It.IsAny<AuditEmailNotification>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new EmailDispatchResult(true, "Email sent to admin@khanenterprises.com"));
+
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Email:FrontendUrl"] = "https://portal.khan.test"
+                })
+                .Build();
+
+            var processor = new AuditReportJobProcessor(
+                workerContext,
+                repo,
+                pdfService,
+                excelService,
+                emailMock.Object,
+                config,
+                NullLogger<AuditReportJobProcessor>.Instance);
+
+            var jobRequest = new ExportJobRequest(
+                JobId: jobId.ToString("N"),
+                TenantId: _tenantA,
+                TenantName: "Khan Enterprises",
+                Year: 2026,
+                RequestedByUserId: _userA,
+                RequestedByEmail: "admin@khanenterprises.com",
+                QueuedAtUtc: DateTime.UtcNow,
+                IsAuditPack: true,
+                AuditReportJobId: jobId,
+                AuditFilter: new AuditExportFilter(
+                    Year: 2026,
+                    StartDate: new DateOnly(2026, 1, 1),
+                    EndDate: new DateOnly(2026, 3, 31),
+                    SiteId: siteId
+                ),
+                RequestedByName: "Shaquib Khan",
+                BaseApiUrl: "https://api.khan.test",
+                FrontendUrl: "https://portal.khan.test"
+            );
+
+            await processor.ProcessAuditPackJobAsync(jobRequest);
+
+            var persisted = await workerContext.AuditReportJobs.IgnoreQueryFilters().FirstAsync(j => j.Id == jobId);
+            persisted.Status.Should().Be(AuditReportStatus.Completed);
+            persisted.TotalRecords.Should().Be(1);
+            persisted.TotalRequestedAmount.Should().Be(5000m);
+            persisted.TotalApprovedAmount.Should().Be(4500m);
+            persisted.PdfBytes.Should().NotBeNull();
+            persisted.PdfBytes!.Take(4).Should().Equal(new byte[] { 0x25, 0x50, 0x44, 0x46 }); // %PDF
+            persisted.ExcelBytes.Should().NotBeNull();
+            persisted.ExcelBytes!.Take(2).Should().Equal(new byte[] { 0x50, 0x4B }); // PK zip (.xlsx)
+            persisted.EmailDispatched.Should().BeTrue();
+            persisted.EmailDeliveryNote.Should().Contain("admin@khanenterprises.com");
+
+            emailMock.Verify(e => e.SendAuditReportReadyEmailAsync(
+                It.Is<AuditEmailNotification>(n =>
+                    n.RecipientEmail == "admin@khanenterprises.com" &&
+                    n.TotalRecords == 1 &&
+                    n.PdfDownloadUrl.Contains("download/pdf?token=secure-test-token-123") &&
+                    n.ExcelDownloadUrl.Contains("download/xlsx?token=secure-test-token-123")),
+                It.IsAny<CancellationToken>()), Times.Once);
         }
     }
 }

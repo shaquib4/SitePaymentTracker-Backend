@@ -1,3 +1,5 @@
+using EnterprisePaymentSystem.Domain.Enums;
+
 namespace EnterprisePaymentSystem.Application.DTOs;
 
 public enum ExportJobStatus
@@ -8,6 +10,28 @@ public enum ExportJobStatus
     Failed = 3
 }
 
+public record AuditExportFilter(
+    int Year,
+    DateOnly? StartDate = null,
+    DateOnly? EndDate = null,
+    PaymentStatus? Status = null,
+    string? Category = null,
+    Guid? SiteId = null,
+    string? Search = null
+);
+
+public record AdminAuditPackRequest(
+    int Year,
+    DateOnly? StartDate = null,
+    DateOnly? EndDate = null,
+    PaymentStatus? Status = null,
+    string? Category = null,
+    Guid? SiteId = null,
+    string? Search = null,
+    string? RecipientEmail = null,
+    string? ReportTitle = null
+);
+
 public record ExportJobRequest(
     string JobId,
     Guid TenantId,
@@ -15,7 +39,13 @@ public record ExportJobRequest(
     int Year,
     Guid RequestedByUserId,
     string RequestedByEmail,
-    DateTime QueuedAtUtc
+    DateTime QueuedAtUtc,
+    bool IsAuditPack = false,
+    Guid? AuditReportJobId = null,
+    AuditExportFilter? AuditFilter = null,
+    string? RequestedByName = null,
+    string? BaseApiUrl = null,
+    string? FrontendUrl = null
 );
 
 public record ExportReportRequest(
@@ -29,5 +59,36 @@ public record ExportJobStatusResponse(
     int Year,
     DateTime QueuedAtUtc,
     string? DownloadUrl,
+    string? ErrorMessage
+);
+
+public record AuditReportJobDto(
+    Guid Id,
+    string ReportTitle,
+    string PeriodLabel,
+    string FilterSummary,
+    int Year,
+    DateOnly? StartDate,
+    DateOnly? EndDate,
+    string? StatusFilter,
+    string? CategoryFilter,
+    Guid? SiteId,
+    string? SiteName,
+    string? SearchFilter,
+    ExportJobStatus Status,
+    string StatusName,
+    int TotalRecords,
+    decimal TotalRequestedAmount,
+    decimal TotalApprovedAmount,
+    string PdfFileName,
+    string ExcelFileName,
+    bool HasPdf,
+    bool HasExcel,
+    string RequestedByName,
+    string RequestedByEmail,
+    bool EmailDispatched,
+    string? EmailDeliveryNote,
+    DateTime QueuedAtUtc,
+    DateTime? CompletedAtUtc,
     string? ErrorMessage
 );

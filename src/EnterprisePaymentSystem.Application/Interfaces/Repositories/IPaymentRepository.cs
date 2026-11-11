@@ -13,6 +13,14 @@ public record PagedPaymentEntitiesResult(
     PaymentPagedSummaryDto Summary
 );
 
+public record AuditExportDataResult(
+    IReadOnlyList<PaymentRequest> Items,
+    PaymentPagedSummaryDto Summary,
+    decimal TotalRequestedAmount,
+    decimal TotalApprovedAmount,
+    string? SiteName
+);
+
 public interface IPaymentRepository
 {
     Task<PaymentRequest?> GetByIdWithAuditLogsAsync(Guid id, CancellationToken ct = default);
@@ -26,6 +34,10 @@ public interface IPaymentRepository
     Task<PagedPaymentEntitiesResult> GetPagedPaymentsAsync(
         PaymentFilterQuery query,
         Guid? userIdFilter = null,
+        CancellationToken ct = default);
+    Task<AuditExportDataResult> GetAuditExportDataAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
         CancellationToken ct = default);
     Task<IReadOnlyList<PaymentRequest>> GetPaymentsByYearAsync(int year, CancellationToken ct = default);
     Task<IReadOnlyList<PaymentRequest>> GetPaymentsForExportAsync(Guid tenantId, int year, CancellationToken ct = default);

@@ -178,8 +178,12 @@ try
     // 6. EXPLICIT INFRASTRUCTURE & BACKGROUND WORKER REGISTRATIONS
     // ==============================================================================
     builder.Services.AddHttpContextAccessor();
+    builder.Services.AddHttpClient("EmailClient");
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
     builder.Services.AddTransient<IExcelExportService, ExcelExportService>();
+    builder.Services.AddTransient<IPdfBreakdownExportService, PdfBreakdownExportService>();
+    builder.Services.AddTransient<IEmailService, EmailService>();
+    builder.Services.AddScoped<IAuditReportJobProcessor, AuditReportJobProcessor>();
     builder.Services.AddSingleton<IBackgroundExportQueue, BackgroundExportQueue>();
     builder.Services.AddHostedService<ExportBackgroundWorker>();
 
@@ -222,6 +226,7 @@ try
     builder.Services.AddScoped<IValidator<CreatePaymentRequest>, CreatePaymentRequestValidator>();
     builder.Services.AddScoped<IValidator<UpdatePaymentRequest>, UpdatePaymentRequestValidator>();
     builder.Services.AddScoped<IValidator<ExportReportRequest>, ExportReportRequestValidator>();
+    builder.Services.AddScoped<IValidator<AdminAuditPackRequest>, AdminAuditPackRequestValidator>();
     builder.Services.AddScoped<IValidator<PaymentFilterQuery>, PaymentFilterQueryValidator>();
 
     // ==============================================================================

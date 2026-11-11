@@ -1,6 +1,6 @@
 # KEPaymentTracker — Comprehensive System & Agent Handover Document
 
-> **Document Version:** 3.6  
+> **Document Version:** 3.7  
 > **Last Updated:** November 2026  
 > **Company / Tenant:** **Khan Enterprises**  
 > **Codebase Paths:**  
@@ -29,6 +29,7 @@
 9. **High-Performance Pagination & Shimmer UI (v3.4)**: Limits display to 20 records per page by default across all dashboards to eliminate DOM lag on annual filters, with animated shimmer loading placeholders and calendar quarter filters.
 10. **True Backend Server-Side Pagination & SQL Summarization (v3.5)**: Eliminates unbounded full-table transfers across all primary endpoints (`GET /api/payments`, `/api/sites/{id}/expenses`, `/api/users/{id}/history`, `/api/users`, `/api/labourers`). PostgreSQL executes `CountAsync`, `GroupBy` financial KPIs, and dynamic pie-chart breakdowns across all matching rows while serializing only the active page (`pageSize = 20` default).
 11. **Role-Aware Optional Descriptions & Requested/Approved Amount Editing (v3.6)**: `Description` is optional for all non-admin roles and required for Admin-initiated payment requests; during Admin approval, Admin can edit the employee's `Description` and adjust `ApprovedAmount` strictly `<= RequestedAmount` (and `> 0`), while `RequestedAmount` and `ApprovedAmount` are tracked and displayed across ledgers and Excel exports.
+12. **Admin-Only Background Audit Pack — Breakdown PDF + Full Expenses Excel + Email + Audit Files Section (v3.7)**: Strictly restricted to `Admin`. Triggered directly beside the Expense Category Distribution breakdown header (in `AdminDashboard` and `SiteExpensesModal`), queuing a background worker (`ExportBackgroundWorker` + `AuditReportJobProcessor`) that generates a formal **Breakdown-only PDF** (`PdfBreakdownExportService` via QuestPDF) alongside a filtered **Expenses Excel** (`ExcelExportService` via ClosedXML) for all matching records in the selected period/filters, persists both binaries in PostgreSQL `"AuditReportJobs"`, dispatches email notification (`IEmailService` supporting Resend HTTP API, SMTP, or structured simulation fallback), and surfaces real-time downloads inside the Admin **Audit Files** section.
 
 ---
 
@@ -133,19 +134,49 @@ All test accounts use the default password: **`Password123!`**
   - Added visual error boundaries and `isError` retry buttons to the mobile card grid and desktop table view.
   - Guidance modal detects iOS and Google App in-app webview: provides clear instructions to open in Safari and tap **"Add to Home Screen"** (`[+]`).
 
-### 4.4. High-Performance Pagination, Shimmer UI & Quarter Presets (v3.4)
-- **Modular Reusable Pagination (`Pagination.tsx`) & Calendar Quarter Presets (`QuarterFilterBar.tsx`)**: Defaults to 20 records per page (`10`, `20`, `50`, `100` options), paired with animated dark-mode shimmer wave skeletons (`ShimmerLoader.tsx`) and quick quarter pills (`Full Year`, `Q1`-`Q4`, `Last Quarter`, `Last 30 Days`, `Reset`).
+### 4.5. High-Performance Pagination & Shimmer UI Engine (v3.4)
+- **Modular Reusable Pagination Component (`Pagination.tsx`)**:
+  - Implements a standard limit of **20 records per page (default)** across Master Payment Ledger, Labourers Roster, Employees Management, Dedicated Site Expenses Ledger, Dedicated Employee Expenses Page, Accountant Ledger, and Office Worker Dashboard.
+  - Page size selector (`10`, `20`, `50`, `100` records per page).
+  - Compact, touch-friendly UI showing `Showing X to Y of Z records`, First, Prev, windowed page numbers (`1 ... 4 [5] 6 ... 10`), Next, and Last buttons.
+  - Dynamic color theme accents: `'amber'` (Admin), `'emerald'` (Accountant), `'blue'` (Office Worker / Site).
+  - Automatic `useEffect` state reset to page 1 whenever search, date ranges, categories, or status filters change.
+- **Strict Separation of Render Pagination vs Summary Totals**:
+  - Financial metric cards (Grand Totals, Approved, Pending Queue, Info Requested) and Pie Chart category breakdowns calculate across the **entire filtered dataset** (e.g. all 365 days of the year), ensuring 100% financial audit accuracy while rendering only the sliced 20 items to DOM.
+- **Dark-Mode Wave Shimmer Skeletons (`ShimmerLoader.tsx` & `src/index.css`)**:
+  - Replaces plain-text loading spinners with animated wave skeleton components (`.shimmer-wave` gradient sweep).
+  - `TableShimmer`: Pulsing multi-column skeleton rows matching exact desktop table column geometries and action buttons.
+  - `CardShimmer`: Pulsing skeleton cards for mobile viewports showing headers, badge chips, amounts, and duration bars.
+- **Calendar Quarter & Date Presets (`QuarterFilterBar.tsx` & `quarterUtils.ts`)**:
+  - Provides quick-selector pills for `Full Year`, `Q1: Jan-Mar`, `Q2: Apr-Jun`, `Q3: Jul-Sep`, `Q4: Oct-Dec`, `Last Quarter`, `Last 30 Days`, and `Reset`.
+  - Smart Quarter calculation with year rollover: When in Q1, clicking "Last Quarter" automatically calculates Q4 of the previous year.
+  - Visual active state pill indication and verification sub-bar (`Active Range: YYYY-MM-DD → YYYY-MM-DD`).
 
-### 4.5. True Backend Server-Side Pagination & SQL Summarization Engine (v3.5)
+### 4.6. True Backend Server-Side Pagination & SQL Summarization Engine (v3.5)
 - **PostgreSQL-First Filtering, Aggregates & Slicing**:
-  - `GET /api/payments` (`PaymentRepository.GetPagedPaymentsAsync`) performs all filtering (`Year`, `Status`, `SiteId`, `StartDate`, `EndDate`, `Search`, `Scope`, `OnlyMine`, `Category`) in SQL, computes `PaymentPagedSummaryDto` across all matching rows using `GroupBy`, and transfers only `.Skip((page - 1) * pageSize).Take(pageSize)` rows (`pageSize = 20` default, max `200`).
-  - `GET /api/sites/{siteId}/expenses` returns `PagedSiteExpensesResponseDto` with SQL `status`, `search`, date, and `category` filtering, distinct site categories, KPI sums, and dynamic `CategoryBreakdowns`.
+  - `GET /api/payments` (`PaymentRepository.GetPagedPaymentsAsync`) performs all filtering (`Year`, `Status`, `SiteId`, `StartDate`, `EndDate`, `Search`, `Scope`, `OnlyMine`, `Category`) in SQL, computes `PaymentPagedSummaryDto` (`GrandTotalAmount`, `TotalApprovedAmount`, `TotalCompletedAmount`, `TotalPendingAmount`, `TotalInfoRequestedAmount`, `TotalRejectedAmount`, counts, and `CategoryBreakdowns`) across the full matching dataset using `GroupBy`, and transfers only `.Skip((page - 1) * pageSize).Take(pageSize)` rows (`pageSize = 20` default, max `200`).
+  - Dynamic pie-chart category breakdown is computed on the server: reflects the active `Status` filter when selected, or defaults to `Approved + Completed` (falling back to all if none) while ignoring `Category` so pie slices remain interactive.
+  - `GET /api/sites/{siteId}/expenses` returns `PagedSiteExpensesResponseDto` with SQL `status`, `search`, date, and `category` filtering, distinct site categories, KPI sums, and `CategoryBreakdowns`.
   - `GET /api/users/{id}/history` returns extended `UserHistoryResponse` with `siteId`, `status`, `search`, `page`, `pageSize` filtering, `FilteredCount`, `TotalRequestsCount`, and `CategoryBreakdowns`.
   - `GET /api/users` and `GET /api/labourers` return `PagedUsersResponseDto` and `PagedLabourersResponseDto` respectively, with `?all=true` / `?role=Supervisor&all=true` lightweight lookup support strictly for form/filter dropdowns.
+- **Debounced Search & Zero Full-Table Transfers on Frontend**:
+  - Added shared `useDebouncedValue` hook (`300ms`) across `AdminDashboard`, `AccountantDashboard`, `OfficeWorkerDashboard`, `SiteExpensesModal`, and `EmployeeExpensesView`.
+  - `SupervisorDashboard` passes `scope` (`wage_requests`, `my_wages`, `material_requests`) plus `page`/`pageSize` and uses `pageSize=1` summary queries for KPIs/pie charts.
 
-### 4.6. Mobile Layout & Date Picker Sizing
+### 4.7. Mobile Layout & Date Picker Sizing
 - Date pickers styled across all dashboards with `min-height: 42px !important; height: 42px !important; [color-scheme: dark]` to match button and dropdown heights on iOS Safari and Chrome.
 - Top tab headers use `.horizontal-scroll-container` with `whitespace-nowrap flex-shrink-0` for smooth swipeable navigation.
+
+### 4.8. Admin-Only Background Audit Pack & Audit Files Section (v3.7)
+- **Endpoints (`ReportsController.cs`)**:
+  - `POST /api/reports/admin-audit-pack` (`[Authorize(Roles = "Admin")]`): Captures active `Year`, `StartDate`, `EndDate`, `Status`, `Category`, `SiteId`, `Search`, and optional `RecipientEmail`; creates an `AuditReportJob` (`Queued`) in PostgreSQL and enqueues work onto `Channel<ExportJobRequest>`.
+  - `GET /api/reports/admin-files` (`[Authorize(Roles = "Admin")]`): Projects metadata for the tenant's recent audit packs (without loading `bytea` file blobs).
+  - `GET /api/reports/admin-files/{jobId}/download/{format}` (`pdf` | `xlsx`): Authenticated `[Authorize(Roles = "Admin")]` JWT bearer download OR constant-time per-job `DownloadToken` query parameter verification for clickable email links.
+  - `DELETE /api/reports/admin-files/{jobId}` (`[Authorize(Roles = "Admin")]`): Removes old audit pack records.
+- **Breakdown-Only Audit PDF (`PdfBreakdownExportService.cs`)**: Uses `QuestPDF` (`LicenseType.Community`) to generate an A4 audit paper containing Period & Active Filter Scope, Executive Financial KPIs, Category Breakdown schedule with percentage allocation bars matching the active status scope, Workflow Status Summary, companion Excel file reference, and Auditor Sign-Off block.
+- **Companion Filtered Expenses Excel (`ExcelExportService.cs`)**: Uses `ClosedXML` to export all itemized expenses matching the active period & filters (including `Site / Project`, `Description`, `Requested Amount`, `Approved Amount`, and `SUM` formulas).
+- **Email Notification Service (`EmailService.cs`)**: Supports Resend API (`Email:ResendApiKey`), SMTP (`Email:SmtpHost` / `SmtpPort` / `SmtpUser` / `SmtpPassword`), and graceful simulation logging fallback stored in `EmailDeliveryNote`.
+- **Frontend Audit UI (`AuditFilesPanel.tsx`, `useAdminAuditReports.ts`)**: Strictly gated to `user?.role === 'Admin'`, places a **`Breakdown PDF + Excel`** action button right beside the Breakdown chart header in `AdminDashboard` and `SiteExpensesModal`, auto-polls running jobs every `2.5s`, displays email delivery status badges, and provides direct 1-click PDF and Excel downloads inside the Admin **Audit Files** tab and drawer modal.
 
 ---
 
@@ -160,20 +191,28 @@ src/
 │   │   ├── PaymentsController.cs      # Expenses, Wage requests, Approval engine
 │   │   ├── SitesController.cs         # Sites, Profitability, Site expenses with Version/Category
 │   │   ├── UsersController.cs         # User generation, User lifetime history
+│   │   ├── ReportsController.cs       # Admin-only Audit Pack queue, Audit Files list & PDF/Excel download
 │   │   └── PeriodAccessRequestsController.cs # Accountant period requests
 │   └── Program.cs                     # JWT, DI, Supabase / PostgreSQL config
 ├── EnterprisePaymentSystem.Application/
-│   ├── DTOs/                          # PaymentDtos, AuthDtos, SiteDtos
+│   ├── DTOs/                          # PaymentDtos, AuthDtos, SiteDtos, ReportDtos
 │   ├── Services/
 │   │   └── PaymentService.cs          # Strict role isolation & period validation
 │   └── Validators/                    # FluentValidation rules
 ├── EnterprisePaymentSystem.Domain/
-│   ├── Entities/                      # PaymentRequest, Labourer, Site, User
-│   └── Enums/                         # UserRole (OfficeWorker = 4), PaymentStatus
+│   ├── Entities/                      # PaymentRequest, Labourer, Site, User, AuditReportJob
+│   └── Enums/                         # UserRole (OfficeWorker = 4), PaymentStatus, AuditReportStatus
 └── EnterprisePaymentSystem.Infrastructure/
     ├── Data/
     │   ├── ApplicationDbContext.cs
-    │   └── DbInitializer.cs           # Seed data with Office Worker Neha Sharma (400004)
+    │   └── DbInitializer.cs           # Seed data + idempotent Postgres schema upgrades
+    ├── BackgroundJobs/
+    │   └── ExportBackgroundWorker.cs  # Asynchronous Channel consumer for Audit Packs & Excel reports
+    ├── Services/
+    │   ├── AuditReportJobProcessor.cs # Generates PDF+Excel, saves DB bytes & triggers email
+    │   ├── PdfBreakdownExportService.cs # QuestPDF executive Breakdown PDF generator
+    │   ├── ExcelExportService.cs      # ClosedXML itemized ledger export
+    │   └── EmailService.cs            # Resend / SMTP / fallback audit notification mail
     └── Repositories/
 ```
 
@@ -183,15 +222,21 @@ src/
 ├── components/
 │   ├── Navbar.tsx                     # Branding, Cyan Office Worker badge, Install PWA trigger
 │   ├── LoginPage.tsx                  # Email / 6-digit ID login + quick-role switcher
-│   ├── SiteExpensesModal.tsx          # Dedicated Site Expense Ledger + Admin Approval Workflow
+│   ├── Pagination.tsx                 # Modular pagination component (default 20 records/page)
+│   ├── QuarterFilterBar.tsx           # Calendar quarter selector pills (Full Year, Q1-Q4, Last Quarter)
+│   ├── ShimmerLoader.tsx              # Dark-mode animated skeleton rows and mobile cards
+│   ├── SiteExpensesModal.tsx          # Dedicated Site Expense Ledger + Admin Approval & Audit Pack trigger
+│   ├── AuditFilesPanel.tsx            # Admin-only Audit Files tab panel & modal drawer (PDF + Excel downloads)
 │   ├── ExpensePieChart.tsx            # Spend category distribution chart
 │   ├── InstallPwaModal.tsx            # Safari / Chrome home-screen install instructions
 │   └── InitiatePaymentModal.tsx       # Expense claim modal with dynamic category selector
 ├── core/
-│   ├── types/index.ts                 # TS models (UserRole, SiteExpenseItemDto with version)
+│   ├── hooks/useAdminAuditReports.ts  # Admin Audit Pack queue, polling & authenticated blob download hook
+│   ├── types/index.ts                 # TS models (UserRole, SiteExpenseItemDto, AuditReportJobItem)
+│   ├── utils/quarterUtils.ts          # Smart quarter ranges & rollover logic
 │   └── auth/AuthContext.tsx           # Authentication state & role routing
 └── modules/
-    ├── admin/AdminDashboard.tsx       # Master ledger, Sites & Profitability, User generator
+    ├── admin/AdminDashboard.tsx       # Master ledger, Sites & Profitability, Audit Files, User generator
     ├── accountant/AccountantDashboard.tsx # Read-only financial ledger, Period access modal
     ├── supervisor/SupervisorDashboard.tsx # Labourer muster roll & wage claims
     └── officeworker/OfficeWorkerDashboard.tsx # Office worker claim history & submitter

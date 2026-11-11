@@ -190,8 +190,19 @@ public class ReportsController : ControllerBase
                 .FirstOrDefaultAsync(ct);
         }
 
+        string? employeeName = null;
+        if (request.EmployeeId.HasValue)
+        {
+            employeeName = await _context.Users
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(u => u.TenantId == tenantId && u.Id == request.EmployeeId.Value)
+                .Select(u => u.FullName)
+                .FirstOrDefaultAsync(ct);
+        }
+
         var periodLabel = BuildPeriodLabel(request.Year, request.StartDate, request.EndDate);
-        var filterSummary = BuildFilterSummary(request, siteName);
+        var filterSummary = BuildFilterSummary(request, siteName, employeeName);
         var reportTitle = string.IsNullOrWhiteSpace(request.ReportTitle)
             ? (!string.IsNullOrWhiteSpace(siteName)
                 ? $"{siteName} Audit Pack ({periodLabel})"
@@ -215,6 +226,8 @@ public class ReportsController : ControllerBase
             CategoryFilter = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim(),
             SiteId = request.SiteId,
             SiteName = siteName,
+            EmployeeId = request.EmployeeId,
+            EmployeeName = employeeName,
             SearchFilter = string.IsNullOrWhiteSpace(request.Search) ? null : request.Search.Trim(),
             Status = AuditReportStatus.Queued,
             DownloadToken = GenerateSecureToken(),
@@ -307,6 +320,8 @@ public class ReportsController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IReadOnlyList<AuditReportJobDto>>> ListAdminAuditFiles(CancellationToken ct)
     {
+        SetNoCacheHeaders();
+
         var items = await _context.AuditReportJobs
             .AsNoTracking()
             .OrderByDescending(j => j.QueuedAtUtc)
@@ -341,7 +356,9 @@ public class ReportsController : ControllerBase
                 j.EmailDeliveryNote,
                 j.QueuedAtUtc,
                 j.CompletedAtUtc,
-                j.ErrorMessage
+                j.ErrorMessage,
+                j.EmployeeId,
+                j.EmployeeName
             ))
             .ToListAsync(ct);
 
@@ -360,6 +377,8 @@ public class ReportsController : ControllerBase
         [FromQuery] string? token = null,
         CancellationToken ct = default)
     {
+        SetNoCacheHeaders();
+
         var normalizedFormat = format.Trim().ToLowerInvariant();
         if (normalizedFormat != "pdf" && normalizedFormat != "xlsx")
         {
@@ -371,9 +390,22 @@ public class ReportsController : ControllerBase
             });
         }
 
+        // Load only metadata + the single requested format binary
         var job = await _context.AuditReportJobs
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(j => j.Id == jobId, ct);
+            .AsNoTracking()
+            .Where(j => j.Id == jobId)
+            .Select(j => new
+            {
+                j.Id,
+                j.TenantId,
+                j.Status,
+                j.DownloadToken,
+                j.PdfFileName,
+                j.ExcelFileName,
+                Bytes = normalizedFormat == "pdf" ? j.PdfBytes : j.ExcelBytes
+            })
+            .FirstOrDefaultAsync(ct);
 
         if (job == null)
         {
@@ -418,51 +450,32 @@ public class ReportsController : ControllerBase
             });
         }
 
-        if (normalizedFormat == "pdf")
+        if (job.Bytes == null || job.Bytes.Length == 0)
         {
-            if (job.PdfBytes == null || job.PdfBytes.Length == 0)
-            {
-                return StatusCode(StatusCodes.Status410Gone, new ProblemDetails
-                {
-                    Title = "PDF already downloaded and cleared",
-                    Detail = "This PDF binary was deleted from database storage after download. Click 'Regenerate' in Audit Files to rebuild it.",
-                    Status = StatusCodes.Status410Gone
-                });
-            }
-
-            var bytes = job.PdfBytes;
-            var fileName = job.PdfFileName;
-            if (!HttpMethods.IsHead(Request.Method))
-            {
-                job.PdfBytes = null;
-                job.PdfDownloadedAtUtc = DateTime.UtcNow;
-                await _context.SaveChangesAsync(ct);
-            }
-            return File(bytes, "application/pdf", fileName);
-        }
-
-        if (job.ExcelBytes == null || job.ExcelBytes.Length == 0)
-        {
+            var label = normalizedFormat == "pdf" ? "PDF" : "Excel";
             return StatusCode(StatusCodes.Status410Gone, new ProblemDetails
             {
-                Title = "Excel already downloaded and cleared",
-                Detail = "This Excel binary was deleted from database storage after download. Click 'Regenerate' in Audit Files to rebuild it.",
+                Title = $"{label} already downloaded and cleared",
+                Detail = $"This {label} binary was deleted from database storage after download. Click 'Regenerate' in Audit Files to rebuild it.",
                 Status = StatusCodes.Status410Gone
             });
         }
 
-        var xlsxBytes = job.ExcelBytes;
-        var xlsxName = job.ExcelFileName;
         if (!HttpMethods.IsHead(Request.Method))
         {
-            job.ExcelBytes = null;
-            job.ExcelDownloadedAtUtc = DateTime.UtcNow;
-            await _context.SaveChangesAsync(ct);
+            await PurgeDownloadedBinaryAsync(job.Id, normalizedFormat);
+            Response.Headers["X-Binary-Purged"] = "true";
         }
+
+        if (normalizedFormat == "pdf")
+        {
+            return File(job.Bytes, "application/pdf", job.PdfFileName);
+        }
+
         return File(
-            xlsxBytes,
+            job.Bytes,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            xlsxName);
+            job.ExcelFileName);
     }
 
     /// <summary>
@@ -518,7 +531,8 @@ public class ReportsController : ControllerBase
                 Status: statusFilter,
                 Category: auditJob.CategoryFilter,
                 SiteId: auditJob.SiteId,
-                Search: auditJob.SearchFilter
+                Search: auditJob.SearchFilter,
+                EmployeeId: auditJob.EmployeeId
             ),
             RequestedByName: auditJob.RequestedByName,
             BaseApiUrl: baseApiUrl,
@@ -526,6 +540,62 @@ public class ReportsController : ControllerBase
         );
 
         await _queue.QueueExportJobAsync(jobRequest, ct);
+    }
+
+    private void SetNoCacheHeaders()
+    {
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+        Response.Headers.Pragma = "no-cache";
+        Response.Headers.Expires = "0";
+    }
+
+    private async Task PurgeDownloadedBinaryAsync(Guid jobId, string normalizedFormat)
+    {
+        var now = DateTime.UtcNow;
+
+        if (_context is DbContext dbContext && dbContext.Database.IsRelational())
+        {
+            if (normalizedFormat == "pdf")
+            {
+                await _context.AuditReportJobs
+                    .IgnoreQueryFilters()
+                    .Where(j => j.Id == jobId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(j => j.PdfBytes, (byte[]?)null)
+                        .SetProperty(j => j.PdfDownloadedAtUtc, now),
+                        CancellationToken.None);
+            }
+            else
+            {
+                await _context.AuditReportJobs
+                    .IgnoreQueryFilters()
+                    .Where(j => j.Id == jobId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(j => j.ExcelBytes, (byte[]?)null)
+                        .SetProperty(j => j.ExcelDownloadedAtUtc, now),
+                        CancellationToken.None);
+            }
+            return;
+        }
+
+        // Fallback for non-relational EF InMemory provider in unit tests
+        var tracked = await _context.AuditReportJobs
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(j => j.Id == jobId, CancellationToken.None);
+        if (tracked != null)
+        {
+            if (normalizedFormat == "pdf")
+            {
+                tracked.PdfBytes = null;
+                tracked.PdfDownloadedAtUtc = now;
+            }
+            else
+            {
+                tracked.ExcelBytes = null;
+                tracked.ExcelDownloadedAtUtc = now;
+            }
+            await _context.SaveChangesAsync(CancellationToken.None);
+        }
     }
 
     private static string GenerateSecureToken()
@@ -551,10 +621,11 @@ public class ReportsController : ControllerBase
         return $"Full Year FY {year}";
     }
 
-    private static string BuildFilterSummary(AdminAuditPackRequest req, string? siteName)
+    private static string BuildFilterSummary(AdminAuditPackRequest req, string? siteName, string? employeeName)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(siteName)) parts.Add($"Site: {siteName}");
+        if (!string.IsNullOrWhiteSpace(employeeName)) parts.Add($"Employee: {employeeName}");
         if (req.Status.HasValue) parts.Add($"Status: {req.Status.Value}");
         if (!string.IsNullOrWhiteSpace(req.Category)) parts.Add($"Category: {req.Category.Trim()}");
         if (!string.IsNullOrWhiteSpace(req.Search)) parts.Add($"Search: \"{req.Search.Trim()}\"");
@@ -591,6 +662,8 @@ public class ReportsController : ControllerBase
         EmailDeliveryNote: j.EmailDeliveryNote,
         QueuedAtUtc: j.QueuedAtUtc,
         CompletedAtUtc: j.CompletedAtUtc,
-        ErrorMessage: j.ErrorMessage
+        ErrorMessage: j.ErrorMessage,
+        EmployeeId: j.EmployeeId,
+        EmployeeName: j.EmployeeName
     );
 }

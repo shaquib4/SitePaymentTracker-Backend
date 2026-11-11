@@ -116,7 +116,7 @@ public class ExcelExportService : IExcelExportService
             worksheet.Cell(currentRow, 7).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
 
             var reqSumCell = worksheet.Cell(currentRow, 8);
-            reqSumCell.FormulaA1 = $"SUM(H5:H{currentRow - 1})";
+            reqSumCell.FormulaA1 = $"SUBTOTAL(109,H5:H{currentRow - 1})";
             reqSumCell.Style.Font.Bold = true;
             reqSumCell.Style.NumberFormat.Format = "#,##0.00";
             reqSumCell.Style.Border.TopBorder = XLBorderStyleValues.Thin;
@@ -124,7 +124,7 @@ public class ExcelExportService : IExcelExportService
             reqSumCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#e0e7ff");
 
             var apprSumCell = worksheet.Cell(currentRow, 9);
-            apprSumCell.FormulaA1 = $"SUM(I5:I{currentRow - 1})";
+            apprSumCell.FormulaA1 = $"SUBTOTAL(109,I5:I{currentRow - 1})";
             apprSumCell.Style.Font.Bold = true;
             apprSumCell.Style.NumberFormat.Format = "#,##0.00";
             apprSumCell.Style.Border.TopBorder = XLBorderStyleValues.Thin;
@@ -134,6 +134,9 @@ public class ExcelExportService : IExcelExportService
             worksheet.Range(currentRow, 1, currentRow, 14).Style.Font.Bold = true;
         }
 
+        int lastFilterRow = payments.Count > 0 ? currentRow - 1 : 4;
+        worksheet.Range(4, 1, lastFilterRow, 14).SetAutoFilter();
+        worksheet.SheetView.FreezeRows(4);
         worksheet.Columns().AdjustToContents(10, 45);
 
         using var memoryStream = new MemoryStream();
@@ -177,6 +180,25 @@ public class ExcelExportService : IExcelExportService
 
                 using var writer = OpenXmlWriter.Create(worksheetPart);
                 writer.WriteStartElement(new Worksheet());
+
+                // Freeze rows 1..4 so Title + AutoFilter column headers stay pinned during 100k-row scroll
+                writer.WriteStartElement(new SheetViews());
+                writer.WriteStartElement(new SheetView { WorkbookViewId = 0 });
+                writer.WriteElement(new Pane
+                {
+                    VerticalSplit = 4D,
+                    TopLeftCell = "A5",
+                    ActivePane = PaneValues.BottomLeft,
+                    State = PaneStateValues.Frozen
+                });
+                writer.WriteElement(new Selection
+                {
+                    Pane = PaneValues.BottomLeft,
+                    ActiveCell = "A5",
+                    SequenceOfReferences = new ListValue<StringValue>(new[] { new StringValue("A5") })
+                });
+                writer.WriteEndElement(); // </sheetView>
+                writer.WriteEndElement(); // </sheetViews>
 
                 // Fixed practical column widths so Excel doesn't need AdjustToContents across 100k+ rows
                 writer.WriteStartElement(new Columns());
@@ -271,20 +293,24 @@ public class ExcelExportService : IExcelExportService
                     }
                 }
 
-                // Totals Formula Row
+                // Totals Formula Row (SUBTOTAL(109, ...) ignores filtered/hidden rows in Excel!)
                 if (totalRowsWritten > 0)
                 {
                     uint lastDataRow = currentRow - 1;
                     writer.WriteStartElement(new Row { RowIndex = currentRow, Height = 20, CustomHeight = true });
-                    WriteTextCell(writer, $"G{currentRow}", "Totals:", styleIndex: 6);
-                    WriteFormulaCell(writer, $"H{currentRow}", $"SUM(H5:H{lastDataRow})", styleIndex: 6);
-                    WriteFormulaCell(writer, $"I{currentRow}", $"SUM(I5:I{lastDataRow})", styleIndex: 6);
+                    WriteTextCell(writer, $"G{currentRow}", "Filtered Totals:", styleIndex: 6);
+                    WriteFormulaCell(writer, $"H{currentRow}", $"SUBTOTAL(109,H5:H{lastDataRow})", styleIndex: 6);
+                    WriteFormulaCell(writer, $"I{currentRow}", $"SUBTOTAL(109,I5:I{lastDataRow})", styleIndex: 6);
                     writer.WriteEndElement();
                 }
 
                 writer.WriteEndElement(); // </sheetData>
 
-                // Merged Title & Subtitle ranges (must follow SheetData in OpenXML schema)
+                // Enable Excel AutoFilter dropdowns on all headers (Status, Employee, Site, Category, etc.)
+                uint lastFilterRow = totalRowsWritten > 0 ? currentRow - 1 : 4u;
+                writer.WriteElement(new AutoFilter { Reference = $"A4:N{lastFilterRow}" });
+
+                // Merged Title & Subtitle ranges (must follow SheetData & AutoFilter in OpenXML schema)
                 writer.WriteStartElement(new MergeCells { Count = 2 });
                 writer.WriteElement(new MergeCell { Reference = "A1:N1" });
                 writer.WriteElement(new MergeCell { Reference = "A2:N2" });
@@ -316,8 +342,8 @@ public class ExcelExportService : IExcelExportService
     private static string[] GetHeaders() =>
     [
         "Request ID",
-        "Submitted By",
-        "Email",
+        "Employee",
+        "Employee Email",
         "Site / Project",
         "Title",
         "Description",
@@ -400,9 +426,9 @@ public class ExcelExportService : IExcelExportService
 
         var fonts = new Fonts(
             new Font(new FontSize { Val = 10 }, new FontName { Val = "Calibri" }), // 0 Default
-            new Font(new Bold(), new Color { Rgb = "FFFFFFFF" }, new FontSize { Val = 14 }, new FontName { Val = "Calibri" }), // 1 Title
-            new Font(new Italic(), new Color { Rgb = "FFFFFFFF" }, new FontSize { Val = 9 }, new FontName { Val = "Calibri" }), // 2 Subtitle
-            new Font(new Bold(), new Color { Rgb = "FFFFFFFF" }, new FontSize { Val = 10 }, new FontName { Val = "Calibri" }), // 3 Header
+            new Font(new Bold(), new FontSize { Val = 14 }, new Color { Rgb = "FFFFFFFF" }, new FontName { Val = "Calibri" }), // 1 Title
+            new Font(new Italic(), new FontSize { Val = 9 }, new Color { Rgb = "FFFFFFFF" }, new FontName { Val = "Calibri" }), // 2 Subtitle
+            new Font(new Bold(), new FontSize { Val = 10 }, new Color { Rgb = "FFFFFFFF" }, new FontName { Val = "Calibri" }), // 3 Header
             new Font(new Bold(), new FontSize { Val = 10 }, new FontName { Val = "Calibri" }) // 4 Totals Bold
         ) { Count = 5 };
 

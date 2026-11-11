@@ -17,7 +17,8 @@ public record AuditExportFilter(
     PaymentStatus? Status = null,
     string? Category = null,
     Guid? SiteId = null,
-    string? Search = null
+    string? Search = null,
+    Guid? EmployeeId = null
 );
 
 public record AdminAuditPackRequest(
@@ -29,7 +30,8 @@ public record AdminAuditPackRequest(
     Guid? SiteId = null,
     string? Search = null,
     string? RecipientEmail = null,
-    string? ReportTitle = null
+    string? ReportTitle = null,
+    Guid? EmployeeId = null
 );
 
 public record ExportJobRequest(
@@ -120,5 +122,7 @@ public record AuditReportJobDto(
     string? EmailDeliveryNote,
     DateTime QueuedAtUtc,
     DateTime? CompletedAtUtc,
-    string? ErrorMessage
+    string? ErrorMessage,
+    Guid? EmployeeId = null,
+    string? EmployeeName = null
 );

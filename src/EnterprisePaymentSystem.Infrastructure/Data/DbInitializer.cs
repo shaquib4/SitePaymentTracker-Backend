@@ -44,6 +44,8 @@ public static class DbInitializer
                     "CategoryFilter" character varying(100) NULL,
                     "SiteId" uuid NULL,
                     "SiteName" character varying(150) NULL,
+                    "EmployeeId" uuid NULL,
+                    "EmployeeName" character varying(150) NULL,
                     "SearchFilter" character varying(200) NULL,
                     "Status" integer NOT NULL DEFAULT 0,
                     "TotalRecords" integer NOT NULL DEFAULT 0,
@@ -64,6 +66,8 @@ public static class DbInitializer
                 );
                 ALTER TABLE "AuditReportJobs" ADD COLUMN IF NOT EXISTS "PdfDownloadedAtUtc" timestamp with time zone NULL;
                 ALTER TABLE "AuditReportJobs" ADD COLUMN IF NOT EXISTS "ExcelDownloadedAtUtc" timestamp with time zone NULL;
+                ALTER TABLE "AuditReportJobs" ADD COLUMN IF NOT EXISTS "EmployeeId" uuid NULL;
+                ALTER TABLE "AuditReportJobs" ADD COLUMN IF NOT EXISTS "EmployeeName" character varying(150) NULL;
                 CREATE INDEX IF NOT EXISTS "IX_AuditReportJobs_TenantId_QueuedAtUtc" ON "AuditReportJobs" ("TenantId", "QueuedAtUtc" DESC);
                 """);
         }

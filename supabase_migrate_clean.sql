@@ -153,6 +153,8 @@ CREATE TABLE IF NOT EXISTS public."AuditReportJobs" (
     "CategoryFilter" character varying(100) NULL,
     "SiteId" uuid NULL,
     "SiteName" character varying(150) NULL,
+    "EmployeeId" uuid NULL,
+    "EmployeeName" character varying(150) NULL,
     "SearchFilter" character varying(200) NULL,
     "Status" integer NOT NULL DEFAULT 0,
     "TotalRecords" integer NOT NULL DEFAULT 0,

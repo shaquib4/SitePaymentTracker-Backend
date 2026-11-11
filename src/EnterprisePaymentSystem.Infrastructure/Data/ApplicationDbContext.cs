@@ -207,6 +207,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             b.Property(j => j.StatusFilter).HasMaxLength(50);
             b.Property(j => j.CategoryFilter).HasMaxLength(100);
             b.Property(j => j.SiteName).HasMaxLength(150);
+            b.Property(j => j.EmployeeName).HasMaxLength(150);
             b.Property(j => j.SearchFilter).HasMaxLength(200);
             b.Property(j => j.TotalRequestedAmount).HasPrecision(14, 2);
             b.Property(j => j.TotalApprovedAmount).HasPrecision(14, 2);

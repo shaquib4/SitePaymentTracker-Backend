@@ -136,7 +136,7 @@ public class PaymentRepository : IPaymentRepository
             filter.StartDate,
             filter.EndDate,
             filter.Search,
-            userIdFilter: null,
+            userIdFilter: filter.EmployeeId,
             scope: null);
 
         if (filter.Status.HasValue)

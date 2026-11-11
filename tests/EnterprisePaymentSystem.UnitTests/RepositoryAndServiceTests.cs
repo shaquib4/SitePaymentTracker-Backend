@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using ClosedXML.Excel;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Validation;
 using EnterprisePaymentSystem.Api.Controllers;
 using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Helpers;
@@ -895,14 +897,138 @@ public class RepositoryAndServiceTests
                 "Full Year FY 2026",
                 "All Matching Expenses");
 
+            using var workbookStream = new MemoryStream(xlsxBytes);
+            using (var openXmlDoc = SpreadsheetDocument.Open(workbookStream, false))
+            {
+                var validator = new OpenXmlValidator();
+                var validationErrors = validator.Validate(openXmlDoc)
+                    .Select(e => $"{e.Path?.XPath}: {e.Description}")
+                    .ToList();
+                validationErrors.Should().BeEmpty();
+            }
+
             using var workbook = new XLWorkbook(new MemoryStream(xlsxBytes));
             var ws = workbook.Worksheet("Expenses 2026");
             ws.Cell("A1").GetString().Should().Contain("Khan Enterprises");
+            ws.Cell("B4").GetString().Should().Be("Employee");
+            ws.Cell("M4").GetString().Should().Be("Status");
+            ws.AutoFilter.IsEnabled.Should().BeTrue();
+            ws.AutoFilter.Range.RangeAddress.ToStringRelative().Should().Be("A4:N9");
+            ws.SheetView.SplitRow.Should().Be(4);
             ws.Cell("H5").GetDouble().Should().Be(1000d);
             ws.Cell("I5").GetDouble().Should().Be(900d);
-            ws.Cell("G10").GetString().Should().Be("Totals:");
-            ws.Cell("H10").FormulaA1.Should().Be("SUM(H5:H9)");
-            ws.Cell("I10").FormulaA1.Should().Be("SUM(I5:I9)");
+            ws.Cell("G10").GetString().Should().Be("Filtered Totals:");
+            ws.Cell("H10").FormulaA1.Should().Be("SUBTOTAL(109,H5:H9)");
+            ws.Cell("I10").FormulaA1.Should().Be("SUBTOTAL(109,I5:I9)");
+
+            // Verify EmployeeId filter isolates matching employee cleanly
+            var filteredByOtherEmployee = await repo.GetAuditExportSummaryAsync(
+                _tenantA,
+                new AuditExportFilter(Year: 2026, EmployeeId: Guid.NewGuid()));
+            filteredByOtherEmployee.TotalRecords.Should().Be(0);
+
+            var filteredByTargetEmployee = await repo.GetAuditExportSummaryAsync(
+                _tenantA,
+                new AuditExportFilter(Year: 2026, EmployeeId: employeeId));
+            filteredByTargetEmployee.TotalRecords.Should().Be(5);
+        }
+    }
+
+    [Fact]
+    public async Task ReportsController_DownloadPurgesBinaryFromDb_OnRelationalSqliteAndInMemory()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"ke_test_{Guid.NewGuid():N}.db");
+        var jobId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={dbPath}")
+            .Options;
+
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(u => u.TenantId).Returns(_tenantA);
+        currentUser.Setup(u => u.UserId).Returns(adminId);
+        currentUser.Setup(u => u.Role).Returns(nameof(UserRole.Admin));
+        currentUser.Setup(u => u.FullName).Returns("Shaquib Khan");
+        currentUser.Setup(u => u.Email).Returns("shaquib@khan.test");
+
+        try
+        {
+            using (var setupCtx = new ApplicationDbContext(options, currentUser.Object))
+            {
+                await setupCtx.Database.EnsureCreatedAsync();
+                await setupCtx.Tenants.AddAsync(new Tenant
+                {
+                    Id = _tenantA,
+                    Name = "Khan Enterprises",
+                    Currency = "INR",
+                    SubscriptionPlan = "Enterprise",
+                    IsActive = true
+                });
+                await setupCtx.AuditReportJobs.AddAsync(new AuditReportJob
+                {
+                    Id = jobId,
+                    TenantId = _tenantA,
+                    RequestedByUserId = adminId,
+                    RequestedByName = "Shaquib Khan",
+                    RequestedByEmail = "shaquib@khan.test",
+                    ReportTitle = "Relational Purge Audit",
+                    PeriodLabel = "Full Year FY 2026",
+                    FilterSummary = "Employee: Neha • Status: Approved",
+                    Year = 2026,
+                    PdfFileName = "FY2026_Breakdown.pdf",
+                    ExcelFileName = "FY2026_Expenses.xlsx",
+                    PdfBytes = new byte[] { 0x25, 0x50, 0x44, 0x46 },
+                    ExcelBytes = new byte[] { 0x50, 0x4B, 0x03, 0x04 },
+                    DownloadToken = "rel-tok-123",
+                    Status = AuditReportStatus.Completed,
+                    TotalRecords = 3,
+                    TotalRequestedAmount = 3000m,
+                    TotalApprovedAmount = 3000m
+                });
+                await setupCtx.SaveChangesAsync();
+            }
+
+            using (var dlCtx = new ApplicationDbContext(options, currentUser.Object))
+            {
+                var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
+                var controller = new ReportsController(
+                    new Mock<IBackgroundExportQueue>().Object,
+                    currentUser.Object,
+                    dlCtx,
+                    new EmailService(config, new Mock<IHttpClientFactory>().Object, NullLogger<EmailService>.Instance),
+                    config,
+                    new ExportReportRequestValidator(),
+                    new AdminAuditPackRequestValidator());
+
+                controller.ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext
+                    {
+                        User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.Role, "Admin") }, "Test"))
+                    }
+                };
+
+                var xlsxResult = await controller.DownloadAdminAuditFile(jobId, "xlsx");
+                xlsxResult.Should().BeOfType<FileContentResult>();
+                controller.Response.Headers["X-Binary-Purged"].ToString().Should().Be("true");
+                controller.Response.Headers.CacheControl.ToString().Should().Contain("no-store");
+            }
+
+            using (var verifyCtx = new ApplicationDbContext(options, currentUser.Object))
+            {
+                var persisted = await verifyCtx.AuditReportJobs.AsNoTracking().FirstAsync(j => j.Id == jobId);
+                persisted.ExcelBytes.Should().BeNull();
+                persisted.ExcelDownloadedAtUtc.Should().NotBeNull();
+                persisted.PdfBytes.Should().NotBeNull();
+                persisted.ExcelFileName.Should().Be("FY2026_Expenses.xlsx");
+                persisted.FilterSummary.Should().Be("Employee: Neha • Status: Approved");
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(dbPath)) File.Delete(dbPath);
         }
     }
 

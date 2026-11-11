@@ -22,6 +22,8 @@ public class AuditReportJob
     public string? CategoryFilter { get; set; }
     public Guid? SiteId { get; set; }
     public string? SiteName { get; set; }
+    public Guid? EmployeeId { get; set; }
+    public string? EmployeeName { get; set; }
     public string? SearchFilter { get; set; }
 
     public AuditReportStatus Status { get; set; } = AuditReportStatus.Queued;

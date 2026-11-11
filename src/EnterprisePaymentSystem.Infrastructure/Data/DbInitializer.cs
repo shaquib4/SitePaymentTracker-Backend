@@ -56,10 +56,14 @@ public static class DbInitializer
                     "DownloadToken" character varying(100) NOT NULL DEFAULT '',
                     "EmailDispatched" boolean NOT NULL DEFAULT false,
                     "EmailDeliveryNote" character varying(500) NULL,
+                    "PdfDownloadedAtUtc" timestamp with time zone NULL,
+                    "ExcelDownloadedAtUtc" timestamp with time zone NULL,
                     "QueuedAtUtc" timestamp with time zone NOT NULL,
                     "CompletedAtUtc" timestamp with time zone NULL,
                     "ErrorMessage" character varying(1000) NULL
                 );
+                ALTER TABLE "AuditReportJobs" ADD COLUMN IF NOT EXISTS "PdfDownloadedAtUtc" timestamp with time zone NULL;
+                ALTER TABLE "AuditReportJobs" ADD COLUMN IF NOT EXISTS "ExcelDownloadedAtUtc" timestamp with time zone NULL;
                 CREATE INDEX IF NOT EXISTS "IX_AuditReportJobs_TenantId_QueuedAtUtc" ON "AuditReportJobs" ("TenantId", "QueuedAtUtc" DESC);
                 """);
         }

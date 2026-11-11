@@ -165,6 +165,8 @@ CREATE TABLE IF NOT EXISTS public."AuditReportJobs" (
     "DownloadToken" character varying(100) NOT NULL DEFAULT '',
     "EmailDispatched" boolean NOT NULL DEFAULT false,
     "EmailDeliveryNote" character varying(500) NULL,
+    "PdfDownloadedAtUtc" timestamp with time zone NULL,
+    "ExcelDownloadedAtUtc" timestamp with time zone NULL,
     "QueuedAtUtc" timestamp with time zone NOT NULL,
     "CompletedAtUtc" timestamp with time zone NULL,
     "ErrorMessage" character varying(1000) NULL

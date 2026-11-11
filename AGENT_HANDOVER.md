@@ -167,16 +167,20 @@ All test accounts use the default password: **`Password123!`**
 - Date pickers styled across all dashboards with `min-height: 42px !important; height: 42px !important; [color-scheme: dark]` to match button and dropdown heights on iOS Safari and Chrome.
 - Top tab headers use `.horizontal-scroll-container` with `whitespace-nowrap flex-shrink-0` for smooth swipeable navigation.
 
-### 4.8. Admin-Only Background Audit Pack & Audit Files Section (v3.7)
+### 4.8. Admin-Only Background Audit Pack, 100k Streaming & Audit Files Section (v3.7)
 - **Endpoints (`ReportsController.cs`)**:
   - `POST /api/reports/admin-audit-pack` (`[Authorize(Roles = "Admin")]`): Captures active `Year`, `StartDate`, `EndDate`, `Status`, `Category`, `SiteId`, `Search`, and optional `RecipientEmail`; creates an `AuditReportJob` (`Queued`) in PostgreSQL and enqueues work onto `Channel<ExportJobRequest>`.
-  - `GET /api/reports/admin-files` (`[Authorize(Roles = "Admin")]`): Projects metadata for the tenant's recent audit packs (without loading `bytea` file blobs).
-  - `GET /api/reports/admin-files/{jobId}/download/{format}` (`pdf` | `xlsx`): Authenticated `[Authorize(Roles = "Admin")]` JWT bearer download OR constant-time per-job `DownloadToken` query parameter verification for clickable email links.
-  - `DELETE /api/reports/admin-files/{jobId}` (`[Authorize(Roles = "Admin")]`): Removes old audit pack records.
-- **Breakdown-Only Audit PDF (`PdfBreakdownExportService.cs`)**: Uses `QuestPDF` (`LicenseType.Community`) to generate an A4 audit paper containing Period & Active Filter Scope, Executive Financial KPIs, Category Breakdown schedule with percentage allocation bars matching the active status scope, Workflow Status Summary, companion Excel file reference, and Auditor Sign-Off block.
-- **Companion Filtered Expenses Excel (`ExcelExportService.cs`)**: Uses `ClosedXML` to export all itemized expenses matching the active period & filters (including `Site / Project`, `Description`, `Requested Amount`, `Approved Amount`, and `SUM` formulas).
-- **Email Notification Service (`EmailService.cs`)**: Supports Resend API (`Email:ResendApiKey`), SMTP (`Email:SmtpHost` / `SmtpPort` / `SmtpUser` / `SmtpPassword`), and graceful simulation logging fallback stored in `EmailDeliveryNote`.
-- **Frontend Audit UI (`AuditFilesPanel.tsx`, `useAdminAuditReports.ts`)**: Strictly gated to `user?.role === 'Admin'`, places a **`Breakdown PDF + Excel`** action button right beside the Breakdown chart header in `AdminDashboard` and `SiteExpensesModal`, auto-polls running jobs every `2.5s`, displays email delivery status badges, and provides direct 1-click PDF and Excel downloads inside the Admin **Audit Files** tab and drawer modal.
+  - `GET /api/reports/email-status` (`[Authorize(Roles = "Admin")]`): Reports live SMTP / Resend mail configuration status on the server.
+  - `GET /api/reports/admin-files` (`[Authorize(Roles = "Admin")]`): Projects metadata (`HasPdf`, `HasExcel`, filenames, period, filters, download timestamps) without transferring `bytea` file blobs.
+  - `POST /api/reports/admin-files/{jobId}/regenerate` (`[Authorize(Roles = "Admin")]`): Re-queues a background rebuild using the preserved date range & filter metadata on that Audit Files entry.
+  - `GET /api/reports/admin-files/{jobId}/download/{format}` (`pdf` | `xlsx`): Authenticated `[Authorize(Roles = "Admin")]` JWT bearer download OR constant-time `DownloadToken` verification; automatically purges the served binary (`PdfBytes = null` / `ExcelBytes = null`) from PostgreSQL immediately on download while preserving filename, period & filter metadata (`410 Gone` if already cleared until regenerated).
+  - `DELETE /api/reports/admin-files/{jobId}` (`[Authorize(Roles = "Admin")]`): Removes an audit pack entry completely.
+- **100k+ Row Keyset Chunking & SAX Streaming Excel (`PaymentRepository.cs` & `ExcelExportService.cs`)**:
+  - `GetAuditExportSummaryAsync` computes totals and category breakdowns via SQL `GroupBy` without loading itemized entities.
+  - `StreamAuditExpenseChunksAsync` streams flat projections in 2,000-row keyset chunks (`CreatedAtUtc`, tie-safe ID cursor) directly into a forward-only `OpenXmlWriter` (`SpreadsheetDocument`) streaming `.xlsx` generator (`DocumentFormat.OpenXml`) with fixed column widths and Excel `SUM` totals.
+- **Breakdown-Only Audit PDF (`PdfBreakdownExportService.cs`)**: Uses `QuestPDF` (`LicenseType.Community`) to generate an A4 audit paper from SQL aggregates (Period & Active Filter Scope, Financial KPIs, Category Breakdown schedule with percentage bars, Status Summary, companion Excel note, and Auditor Sign-Off).
+- **Email Notification Service (`EmailService.cs`)**: Supports Resend HTTP API (`Email:ResendApiKey` / `RESEND_API_KEY`) and `MailKit` SMTP supporting both port `465` SSL and `587` STARTTLS (`Email:SmtpHost` / `SMTP_HOST`, `SmtpUser`, `SmtpPassword`), and honestly sets `EmailDispatched = false` when no server mail provider is configured.
+- **Frontend Audit UI (`AuditFilesPanel.tsx`, `useAdminAuditReports.ts`)**: Strictly gated to `user?.role === 'Admin'`, places a **`Breakdown PDF + Excel`** action button right beside the Breakdown chart header in `AdminDashboard` and `SiteExpensesModal`, displays live server mail delivery configuration status, shows **Download PDF / Excel** alongside **Regenerate** right next to each download row, and auto-polls running jobs every `2.5s`.
 
 ---
 

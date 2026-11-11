@@ -12,4 +12,12 @@ public interface IExcelExportService
         int year,
         string periodLabel,
         string filterSummary);
+
+    Task<byte[]> GenerateChunkedAuditExpensesExcelAsync(
+        IAsyncEnumerable<IReadOnlyList<AuditExpenseRowDto>> rowChunks,
+        string tenantName,
+        int year,
+        string periodLabel,
+        string filterSummary,
+        CancellationToken ct = default);
 }

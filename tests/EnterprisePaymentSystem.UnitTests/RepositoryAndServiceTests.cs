@@ -1,7 +1,11 @@
+using System.Security.Claims;
+using ClosedXML.Excel;
+using EnterprisePaymentSystem.Api.Controllers;
 using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Helpers;
 using EnterprisePaymentSystem.Application.Interfaces;
 using EnterprisePaymentSystem.Application.Services;
+using EnterprisePaymentSystem.Application.Validators;
 using EnterprisePaymentSystem.Domain.Entities;
 using EnterprisePaymentSystem.Domain.Enums;
 using EnterprisePaymentSystem.Domain.Exceptions;
@@ -9,6 +13,8 @@ using EnterprisePaymentSystem.Infrastructure.Data;
 using EnterprisePaymentSystem.Infrastructure.Repositories;
 using EnterprisePaymentSystem.Infrastructure.Services;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -813,6 +819,213 @@ public class RepositoryAndServiceTests
                     n.PdfDownloadUrl.Contains("download/pdf?token=secure-test-token-123") &&
                     n.ExcelDownloadUrl.Contains("download/xlsx?token=secure-test-token-123")),
                 It.IsAny<CancellationToken>()), Times.Once);
+        }
+    }
+
+    [Fact]
+    public async Task ChunkedAuditStreaming_ShouldStreamAllRowsWithTies_AndGenerateValidOpenXmlWorkbook()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var employeeId = Guid.NewGuid();
+        var sharedTimestamp = new DateTime(2026, 6, 15, 10, 0, 0, DateTimeKind.Utc);
+
+        using (var setupContext = CreateInMemoryDbContext(dbName, _tenantA))
+        {
+            await setupContext.Users.AddAsync(new User
+            {
+                Id = employeeId,
+                TenantId = _tenantA,
+                FullName = "Site Engineer",
+                Email = "site@khan.test",
+                PhoneNumber = "9999999999",
+                SixDigitUserId = "300002"
+            });
+
+            // Insert 5 rows where 3 share the exact same CreatedAtUtc (tests cursor tie-breaking)
+            var list = new List<PaymentRequest>();
+            for (int i = 0; i < 5; i++)
+            {
+                list.Add(new PaymentRequest
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = _tenantA,
+                    UserId = employeeId,
+                    Title = $"Expense Item {i + 1}",
+                    Category = "Material Supply",
+                    RequestedAmount = 1000m,
+                    Amount = 900m,
+                    Currency = "INR",
+                    ExpenseYear = 2026,
+                    StartDate = new DateOnly(2026, 6, 1 + i),
+                    EndDate = new DateOnly(2026, 6, 1 + i),
+                    Status = PaymentStatus.Approved,
+                    CreatedAtUtc = i < 3 ? sharedTimestamp : sharedTimestamp.AddMinutes(-i)
+                });
+            }
+            await setupContext.PaymentRequests.AddRangeAsync(list);
+            await setupContext.SaveChangesAsync();
+        }
+
+        using (var context = CreateInMemoryDbContext(dbName, null))
+        {
+            var repo = new PaymentRepository(context);
+            var excelService = new ExcelExportService();
+
+            var filter = new AuditExportFilter(Year: 2026);
+            var summary = await repo.GetAuditExportSummaryAsync(_tenantA, filter);
+            summary.TotalRecords.Should().Be(5);
+            summary.TotalRequestedAmount.Should().Be(5000m);
+            summary.TotalApprovedAmount.Should().Be(4500m);
+
+            var chunkSizes = new List<int>();
+            var allRows = new List<AuditExpenseRowDto>();
+            await foreach (var chunk in repo.StreamAuditExpenseChunksAsync(_tenantA, filter, chunkSize: 2))
+            {
+                chunkSizes.Add(chunk.Count);
+                allRows.AddRange(chunk);
+            }
+
+            chunkSizes.Should().Equal(new[] { 2, 2, 1 });
+            allRows.Select(r => r.Id).Distinct().Should().HaveCount(5);
+
+            var xlsxBytes = await excelService.GenerateChunkedAuditExpensesExcelAsync(
+                repo.StreamAuditExpenseChunksAsync(_tenantA, filter, chunkSize: 2),
+                "Khan Enterprises",
+                2026,
+                "Full Year FY 2026",
+                "All Matching Expenses");
+
+            using var workbook = new XLWorkbook(new MemoryStream(xlsxBytes));
+            var ws = workbook.Worksheet("Expenses 2026");
+            ws.Cell("A1").GetString().Should().Contain("Khan Enterprises");
+            ws.Cell("H5").GetDouble().Should().Be(1000d);
+            ws.Cell("I5").GetDouble().Should().Be(900d);
+            ws.Cell("G10").GetString().Should().Be("Totals:");
+            ws.Cell("H10").FormulaA1.Should().Be("SUM(H5:H9)");
+            ws.Cell("I10").FormulaA1.Should().Be("SUM(I5:I9)");
+        }
+    }
+
+    [Fact]
+    public async Task ReportsController_DownloadPurgesBinaryFromDb_AndRegenerateRequeuesSavedFilters()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var jobId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+
+        using (var setupContext = CreateInMemoryDbContext(dbName, _tenantA))
+        {
+            await setupContext.Tenants.AddAsync(new Tenant
+            {
+                Id = _tenantA,
+                Name = "Khan Enterprises",
+                Currency = "INR",
+                SubscriptionPlan = "Enterprise",
+                IsActive = true
+            });
+
+            await setupContext.AuditReportJobs.AddAsync(new AuditReportJob
+            {
+                Id = jobId,
+                TenantId = _tenantA,
+                RequestedByUserId = adminId,
+                RequestedByName = "Shaquib Khan",
+                RequestedByEmail = "shaquib@khan.test",
+                ReportTitle = "Q2 Highway Audit Pack",
+                PeriodLabel = "2026-04-01 to 2026-06-30 (FY 2026)",
+                FilterSummary = "Site: Highway • Status: Approved",
+                Year = 2026,
+                StartDate = new DateOnly(2026, 4, 1),
+                EndDate = new DateOnly(2026, 6, 30),
+                StatusFilter = "Approved",
+                SiteId = siteId,
+                SiteName = "Highway",
+                PdfFileName = "Site_Highway_Breakdown.pdf",
+                ExcelFileName = "Site_Highway_Expenses.xlsx",
+                PdfBytes = new byte[] { 0x25, 0x50, 0x44, 0x46 },
+                ExcelBytes = new byte[] { 0x50, 0x4B, 0x03, 0x04 },
+                DownloadToken = "tok-123",
+                Status = AuditReportStatus.Completed,
+                TotalRecords = 12,
+                TotalRequestedAmount = 50000m,
+                TotalApprovedAmount = 45000m
+            });
+            await setupContext.SaveChangesAsync();
+        }
+
+        using (var context = CreateInMemoryDbContext(dbName, _tenantA))
+        {
+            var currentUser = new Mock<ICurrentUserService>();
+            currentUser.Setup(u => u.TenantId).Returns(_tenantA);
+            currentUser.Setup(u => u.UserId).Returns(adminId);
+            currentUser.Setup(u => u.Role).Returns(nameof(UserRole.Admin));
+            currentUser.Setup(u => u.FullName).Returns("Shaquib Khan");
+            currentUser.Setup(u => u.Email).Returns("shaquib@khan.test");
+
+            var queueMock = new Mock<IBackgroundExportQueue>();
+            ExportJobRequest? queuedReq = null;
+            queueMock
+                .Setup(q => q.QueueExportJobAsync(It.IsAny<ExportJobRequest>(), It.IsAny<CancellationToken>()))
+                .Callback<ExportJobRequest, CancellationToken>((r, _) => queuedReq = r)
+                .Returns(ValueTask.CompletedTask);
+
+            var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
+            var httpFactoryMock = new Mock<IHttpClientFactory>();
+            var emailService = new EmailService(config, httpFactoryMock.Object, NullLogger<EmailService>.Instance);
+
+            var controller = new ReportsController(
+                queueMock.Object,
+                currentUser.Object,
+                context,
+                emailService,
+                config,
+                new ExportReportRequestValidator(),
+                new AdminAuditPackRequestValidator());
+
+            var httpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.Role, "Admin")
+                }, "TestAuth"))
+            };
+            httpContext.Request.Scheme = "https";
+            httpContext.Request.Host = new HostString("api.khan.test");
+            controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+            // 1. Download PDF -> returns bytes & clears ONLY PdfBytes from DB
+            var pdfResult = await controller.DownloadAdminAuditFile(jobId, "pdf");
+            var fileResult = pdfResult.Should().BeOfType<FileContentResult>().Subject;
+            fileResult.FileDownloadName.Should().Be("Site_Highway_Breakdown.pdf");
+            fileResult.FileContents.Should().Equal(new byte[] { 0x25, 0x50, 0x44, 0x46 });
+
+            var afterDownload = await context.AuditReportJobs.AsNoTracking().FirstAsync(j => j.Id == jobId);
+            afterDownload.PdfBytes.Should().BeNull();
+            afterDownload.PdfDownloadedAtUtc.Should().NotBeNull();
+            afterDownload.ExcelBytes.Should().NotBeNull();
+            afterDownload.PdfFileName.Should().Be("Site_Highway_Breakdown.pdf");
+            afterDownload.StartDate.Should().Be(new DateOnly(2026, 4, 1));
+            afterDownload.StatusFilter.Should().Be("Approved");
+
+            // 2. Second PDF download returns 410 Gone
+            var secondPdf = await controller.DownloadAdminAuditFile(jobId, "pdf");
+            var goneResult = secondPdf.Should().BeOfType<ObjectResult>().Subject;
+            goneResult.StatusCode.Should().Be(410);
+
+            // 3. Regenerate re-queues using saved date range & filter metadata
+            var regenResult = await controller.RegenerateAdminAuditPack(jobId);
+            regenResult.Result.Should().BeOfType<AcceptedResult>();
+
+            queuedReq.Should().NotBeNull();
+            queuedReq!.IsAuditPack.Should().BeTrue();
+            queuedReq.AuditFilter!.StartDate.Should().Be(new DateOnly(2026, 4, 1));
+            queuedReq.AuditFilter.EndDate.Should().Be(new DateOnly(2026, 6, 30));
+            queuedReq.AuditFilter.Status.Should().Be(PaymentStatus.Approved);
+            queuedReq.AuditFilter.SiteId.Should().Be(siteId);
+
+            // 4. Unconfigured EmailService reports honest Dispatched=false + IsConfigured=false
+            emailService.GetConfigurationStatus().IsConfigured.Should().BeFalse();
         }
     }
 }

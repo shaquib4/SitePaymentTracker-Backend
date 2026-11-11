@@ -62,6 +62,34 @@ public record ExportJobStatusResponse(
     string? ErrorMessage
 );
 
+public record RegenerateAuditPackRequest(
+    string? RecipientEmail = null
+);
+
+public record EmailConfigurationStatusDto(
+    bool IsConfigured,
+    string Provider,
+    string? FromAddress,
+    string Message
+);
+
+public record AuditExpenseRowDto(
+    Guid Id,
+    string SubmitterName,
+    string SubmitterEmail,
+    string SiteName,
+    string Title,
+    string Description,
+    string Category,
+    decimal RequestedAmount,
+    decimal? ApprovedAmount,
+    string Currency,
+    DateOnly StartDate,
+    DateOnly EndDate,
+    string StatusName,
+    string InvoiceNumber
+);
+
 public record AuditReportJobDto(
     Guid Id,
     string ReportTitle,
@@ -84,6 +112,8 @@ public record AuditReportJobDto(
     string ExcelFileName,
     bool HasPdf,
     bool HasExcel,
+    DateTime? PdfDownloadedAtUtc,
+    DateTime? ExcelDownloadedAtUtc,
     string RequestedByName,
     string RequestedByEmail,
     bool EmailDispatched,

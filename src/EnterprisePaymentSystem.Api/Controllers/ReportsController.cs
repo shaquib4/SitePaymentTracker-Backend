@@ -18,6 +18,7 @@ public class ReportsController : ControllerBase
     private readonly IBackgroundExportQueue _queue;
     private readonly ICurrentUserService _currentUserService;
     private readonly IApplicationDbContext _context;
+    private readonly IEmailService _emailService;
     private readonly IConfiguration _configuration;
     private readonly IValidator<ExportReportRequest> _validator;
     private readonly IValidator<AdminAuditPackRequest> _adminAuditValidator;
@@ -27,6 +28,7 @@ public class ReportsController : ControllerBase
         IBackgroundExportQueue queue,
         ICurrentUserService currentUserService,
         IApplicationDbContext context,
+        IEmailService emailService,
         IConfiguration configuration,
         IValidator<ExportReportRequest> validator,
         IValidator<AdminAuditPackRequest> adminAuditValidator)
@@ -34,6 +36,7 @@ public class ReportsController : ControllerBase
         _queue = queue;
         _currentUserService = currentUserService;
         _context = context;
+        _emailService = emailService;
         _configuration = configuration;
         _validator = validator;
         _adminAuditValidator = adminAuditValidator;
@@ -127,9 +130,19 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>
+    /// Admin-only diagnostic endpoint checking whether SMTP or Resend mail credentials are active on the server.
+    /// </summary>
+    [HttpGet("email-status")]
+    [Authorize(Roles = "Admin")]
+    public ActionResult<EmailConfigurationStatusDto> GetEmailConfigurationStatus()
+    {
+        return Ok(_emailService.GetConfigurationStatus());
+    }
+
+    /// <summary>
     /// Strictly Admin-only: Queues a background job that generates a formal Breakdown PDF
-    /// AND a detailed Excel ledger of all matching expenses for the selected period &amp; filters,
-    /// saves them to database storage, and dispatches a notification email with download links.
+    /// AND a streamed Expenses Excel ledger of all matching expenses for the selected period &amp; filters,
+    /// saves them temporarily until downloaded, and dispatches a notification email with download links.
     /// </summary>
     [HttpPost("admin-audit-pack")]
     [Authorize(Roles = "Admin")]
@@ -185,11 +198,6 @@ public class ReportsController : ControllerBase
                 : $"Expense Breakdown & Ledger Audit ({periodLabel})")
             : request.ReportTitle.Trim();
 
-        var downloadToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
-
         var auditJob = new AuditReportJob
         {
             Id = Guid.NewGuid(),
@@ -209,54 +217,91 @@ public class ReportsController : ControllerBase
             SiteName = siteName,
             SearchFilter = string.IsNullOrWhiteSpace(request.Search) ? null : request.Search.Trim(),
             Status = AuditReportStatus.Queued,
-            DownloadToken = downloadToken,
+            DownloadToken = GenerateSecureToken(),
             QueuedAtUtc = DateTime.UtcNow
         };
 
         await _context.AuditReportJobs.AddAsync(auditJob, ct);
         await _context.SaveChangesAsync(ct);
 
-        var configuredApiBase = _configuration["Email:PublicApiBaseUrl"];
-        var baseApiUrl = !string.IsNullOrWhiteSpace(configuredApiBase)
-            ? configuredApiBase.TrimEnd('/')
-            : $"{Request.Scheme}://{Request.Host}";
-
-        var configuredFrontendUrl = _configuration["Email:FrontendUrl"];
-        var frontendUrl = !string.IsNullOrWhiteSpace(configuredFrontendUrl)
-            ? configuredFrontendUrl.TrimEnd('/')
-            : Request.Headers.Origin.FirstOrDefault();
-
-        var jobRequest = new ExportJobRequest(
-            JobId: auditJob.Id.ToString("N"),
-            TenantId: tenantId,
-            TenantName: tenantName,
-            Year: request.Year,
-            RequestedByUserId: userId,
-            RequestedByEmail: recipientEmail,
-            QueuedAtUtc: auditJob.QueuedAtUtc,
-            IsAuditPack: true,
-            AuditReportJobId: auditJob.Id,
-            AuditFilter: new AuditExportFilter(
-                Year: request.Year,
-                StartDate: request.StartDate,
-                EndDate: request.EndDate,
-                Status: request.Status,
-                Category: auditJob.CategoryFilter,
-                SiteId: request.SiteId,
-                Search: auditJob.SearchFilter
-            ),
-            RequestedByName: adminName,
-            BaseApiUrl: baseApiUrl,
-            FrontendUrl: frontendUrl
-        );
-
-        await _queue.QueueExportJobAsync(jobRequest, ct);
+        await EnqueueAuditJobAsync(auditJob, tenantName, request.Status, ct);
 
         return Accepted($"/api/reports/admin-files/{auditJob.Id}", ToDto(auditJob));
     }
 
     /// <summary>
-    /// Strictly Admin-only: Lists generated background Audit Packs (PDF Breakdown + Expenses Excel).
+    /// Strictly Admin-only: Regenerates PDF + Excel using the preserved date range and filter metadata
+    /// on an existing Audit Files entry (for example after files were downloaded and purged from DB).
+    /// </summary>
+    [HttpPost("admin-files/{jobId:guid}/regenerate")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<AuditReportJobDto>> RegenerateAdminAuditPack(
+        Guid jobId,
+        [FromBody] RegenerateAuditPackRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var auditJob = await _context.AuditReportJobs
+            .FirstOrDefaultAsync(j => j.Id == jobId, ct);
+
+        if (auditJob == null)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Audit entry not found",
+                Detail = "The requested audit report record was not found.",
+                Status = StatusCodes.Status404NotFound
+            });
+        }
+
+        if (auditJob.Status == AuditReportStatus.Queued || auditJob.Status == AuditReportStatus.Processing)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Already generating",
+                Detail = "This audit pack is currently being generated.",
+                Status = StatusCodes.Status409Conflict
+            });
+        }
+
+        PaymentStatus? parsedStatus = null;
+        if (!string.IsNullOrWhiteSpace(auditJob.StatusFilter) &&
+            Enum.TryParse<PaymentStatus>(auditJob.StatusFilter, ignoreCase: true, out var statusVal))
+        {
+            parsedStatus = statusVal;
+        }
+
+        if (!string.IsNullOrWhiteSpace(request?.RecipientEmail))
+        {
+            auditJob.RequestedByEmail = request.RecipientEmail.Trim();
+        }
+
+        auditJob.Status = AuditReportStatus.Queued;
+        auditJob.PdfBytes = null;
+        auditJob.ExcelBytes = null;
+        auditJob.PdfDownloadedAtUtc = null;
+        auditJob.ExcelDownloadedAtUtc = null;
+        auditJob.CompletedAtUtc = null;
+        auditJob.ErrorMessage = null;
+        auditJob.EmailDispatched = false;
+        auditJob.EmailDeliveryNote = null;
+        auditJob.DownloadToken = GenerateSecureToken();
+        auditJob.QueuedAtUtc = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync(ct);
+
+        var tenantName = await _context.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id == auditJob.TenantId)
+            .Select(t => t.Name)
+            .FirstOrDefaultAsync(ct) ?? "Khan Enterprises";
+
+        await EnqueueAuditJobAsync(auditJob, tenantName, parsedStatus, ct);
+
+        return Accepted($"/api/reports/admin-files/{auditJob.Id}", ToDto(auditJob));
+    }
+
+    /// <summary>
+    /// Strictly Admin-only: Lists Audit Pack records (preserves filename, period, and filters even after binaries are purged post-download).
     /// </summary>
     [HttpGet("admin-files")]
     [Authorize(Roles = "Admin")]
@@ -286,8 +331,10 @@ public class ReportsController : ControllerBase
                 j.TotalApprovedAmount,
                 j.PdfFileName,
                 j.ExcelFileName,
-                j.Status == AuditReportStatus.Completed && j.PdfFileName != "",
-                j.Status == AuditReportStatus.Completed && j.ExcelFileName != "",
+                j.Status == AuditReportStatus.Completed && j.PdfBytes != null,
+                j.Status == AuditReportStatus.Completed && j.ExcelBytes != null,
+                j.PdfDownloadedAtUtc,
+                j.ExcelDownloadedAtUtc,
                 j.RequestedByName,
                 j.RequestedByEmail,
                 j.EmailDispatched,
@@ -302,8 +349,8 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>
-    /// Streams either the Breakdown PDF ('pdf') or detailed Expenses Excel ('xlsx').
-    /// Requires Admin JWT Bearer authorization OR a valid secret per-job email download token.
+    /// Streams Breakdown PDF ('pdf') or Expenses Excel ('xlsx') and deletes its heavy bytea payload
+    /// from the database immediately after serving while preserving filename, date range, and filter metadata for regeneration.
     /// </summary>
     [HttpGet("admin-files/{jobId:guid}/download/{format}")]
     [AllowAnonymous]
@@ -326,7 +373,6 @@ public class ReportsController : ControllerBase
 
         var job = await _context.AuditReportJobs
             .IgnoreQueryFilters()
-            .AsNoTracking()
             .FirstOrDefaultAsync(j => j.Id == jobId, ct);
 
         if (job == null)
@@ -376,23 +422,51 @@ public class ReportsController : ControllerBase
         {
             if (job.PdfBytes == null || job.PdfBytes.Length == 0)
             {
-                return NotFound("PDF breakdown file not available.");
+                return StatusCode(StatusCodes.Status410Gone, new ProblemDetails
+                {
+                    Title = "PDF already downloaded and cleared",
+                    Detail = "This PDF binary was deleted from database storage after download. Click 'Regenerate' in Audit Files to rebuild it.",
+                    Status = StatusCodes.Status410Gone
+                });
             }
-            return File(job.PdfBytes, "application/pdf", job.PdfFileName);
+
+            var bytes = job.PdfBytes;
+            var fileName = job.PdfFileName;
+            if (!HttpMethods.IsHead(Request.Method))
+            {
+                job.PdfBytes = null;
+                job.PdfDownloadedAtUtc = DateTime.UtcNow;
+                await _context.SaveChangesAsync(ct);
+            }
+            return File(bytes, "application/pdf", fileName);
         }
 
         if (job.ExcelBytes == null || job.ExcelBytes.Length == 0)
         {
-            return NotFound("Excel ledger file not available.");
+            return StatusCode(StatusCodes.Status410Gone, new ProblemDetails
+            {
+                Title = "Excel already downloaded and cleared",
+                Detail = "This Excel binary was deleted from database storage after download. Click 'Regenerate' in Audit Files to rebuild it.",
+                Status = StatusCodes.Status410Gone
+            });
+        }
+
+        var xlsxBytes = job.ExcelBytes;
+        var xlsxName = job.ExcelFileName;
+        if (!HttpMethods.IsHead(Request.Method))
+        {
+            job.ExcelBytes = null;
+            job.ExcelDownloadedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
         }
         return File(
-            job.ExcelBytes,
+            xlsxBytes,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            job.ExcelFileName);
+            xlsxName);
     }
 
     /// <summary>
-    /// Strictly Admin-only: Removes an audit pack entry from the Audit Files section.
+    /// Strictly Admin-only: Deletes an Audit Files entry completely (including saved filter history).
     /// </summary>
     [HttpDelete("admin-files/{jobId:guid}")]
     [Authorize(Roles = "Admin")]
@@ -410,6 +484,55 @@ public class ReportsController : ControllerBase
         await _context.SaveChangesAsync(ct);
         return NoContent();
     }
+
+    private async Task EnqueueAuditJobAsync(
+        AuditReportJob auditJob,
+        string tenantName,
+        PaymentStatus? statusFilter,
+        CancellationToken ct)
+    {
+        var configuredApiBase = _configuration["Email:PublicApiBaseUrl"] ?? _configuration["PUBLIC_API_BASE_URL"];
+        var baseApiUrl = !string.IsNullOrWhiteSpace(configuredApiBase)
+            ? configuredApiBase.TrimEnd('/')
+            : $"{Request.Scheme}://{Request.Host}";
+
+        var configuredFrontendUrl = _configuration["Email:FrontendUrl"] ?? _configuration["FRONTEND_URL"];
+        var frontendUrl = !string.IsNullOrWhiteSpace(configuredFrontendUrl)
+            ? configuredFrontendUrl.TrimEnd('/')
+            : Request.Headers.Origin.FirstOrDefault();
+
+        var jobRequest = new ExportJobRequest(
+            JobId: auditJob.Id.ToString("N"),
+            TenantId: auditJob.TenantId,
+            TenantName: tenantName,
+            Year: auditJob.Year,
+            RequestedByUserId: auditJob.RequestedByUserId,
+            RequestedByEmail: auditJob.RequestedByEmail,
+            QueuedAtUtc: auditJob.QueuedAtUtc,
+            IsAuditPack: true,
+            AuditReportJobId: auditJob.Id,
+            AuditFilter: new AuditExportFilter(
+                Year: auditJob.Year,
+                StartDate: auditJob.StartDate,
+                EndDate: auditJob.EndDate,
+                Status: statusFilter,
+                Category: auditJob.CategoryFilter,
+                SiteId: auditJob.SiteId,
+                Search: auditJob.SearchFilter
+            ),
+            RequestedByName: auditJob.RequestedByName,
+            BaseApiUrl: baseApiUrl,
+            FrontendUrl: frontendUrl
+        );
+
+        await _queue.QueueExportJobAsync(jobRequest, ct);
+    }
+
+    private static string GenerateSecureToken()
+        => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
 
     private static string BuildPeriodLabel(int year, DateOnly? startDate, DateOnly? endDate)
     {
@@ -458,8 +581,10 @@ public class ReportsController : ControllerBase
         TotalApprovedAmount: j.TotalApprovedAmount,
         PdfFileName: j.PdfFileName,
         ExcelFileName: j.ExcelFileName,
-        HasPdf: j.Status == AuditReportStatus.Completed && !string.IsNullOrEmpty(j.PdfFileName),
-        HasExcel: j.Status == AuditReportStatus.Completed && !string.IsNullOrEmpty(j.ExcelFileName),
+        HasPdf: j.Status == AuditReportStatus.Completed && j.PdfBytes != null,
+        HasExcel: j.Status == AuditReportStatus.Completed && j.ExcelBytes != null,
+        PdfDownloadedAtUtc: j.PdfDownloadedAtUtc,
+        ExcelDownloadedAtUtc: j.ExcelDownloadedAtUtc,
         RequestedByName: j.RequestedByName,
         RequestedByEmail: j.RequestedByEmail,
         EmailDispatched: j.EmailDispatched,

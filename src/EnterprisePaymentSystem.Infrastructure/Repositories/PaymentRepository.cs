@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Interfaces.Repositories;
 using EnterprisePaymentSystem.Domain.Entities;
@@ -121,12 +122,8 @@ public class PaymentRepository : IPaymentRepository
         );
     }
 
-    public async Task<AuditExportDataResult> GetAuditExportDataAsync(
-        Guid tenantId,
-        AuditExportFilter filter,
-        CancellationToken ct = default)
+    private IQueryable<PaymentRequest> BuildTenantAuditQuery(Guid tenantId, AuditExportFilter filter)
     {
-        // Background worker executes outside HTTP tenant scope; IgnoreQueryFilters + explicit TenantId predicate.
         var tenantScoped = _context.PaymentRequests
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -153,20 +150,34 @@ public class PaymentRepository : IPaymentRepository
             filtered = filtered.Where(p => p.Category == cat);
         }
 
+        return filtered;
+    }
+
+    public async Task<AuditExportSummaryResult> GetAuditExportSummaryAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
+        CancellationToken ct = default)
+    {
+        var filtered = BuildTenantAuditQuery(tenantId, filter);
         var summary = await ComputeSummaryAsync(filtered, filter.Status, ct);
 
-        var items = await filtered
-            .OrderByDescending(p => p.StartDate)
-            .ThenByDescending(p => p.CreatedAtUtc)
-            .Include(p => p.User)
-            .Include(p => p.Site)
-            .Include(p => p.Labourer)
+        // Single database aggregation for TotalRecords, TotalRequestedAmount, and TotalApprovedAmount
+        var totalsByStatus = await filtered
+            .GroupBy(p => p.Status)
+            .Select(g => new
+            {
+                Status = g.Key,
+                Count = g.Count(),
+                Requested = g.Sum(p => p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount),
+                Amount = g.Sum(p => p.Amount)
+            })
             .ToListAsync(ct);
 
-        var totalRequestedAmount = items.Sum(p => p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount);
-        var totalApprovedAmount = items
-            .Where(p => p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed)
-            .Sum(p => p.Amount);
+        int totalRecords = totalsByStatus.Sum(x => x.Count);
+        decimal totalRequestedAmount = totalsByStatus.Sum(x => x.Requested);
+        decimal totalApprovedAmount = totalsByStatus
+            .Where(x => x.Status == PaymentStatus.Approved || x.Status == PaymentStatus.Completed)
+            .Sum(x => x.Amount);
 
         string? siteName = null;
         if (filter.SiteId.HasValue)
@@ -179,12 +190,134 @@ public class PaymentRepository : IPaymentRepository
                 .FirstOrDefaultAsync(ct);
         }
 
-        return new AuditExportDataResult(
-            Items: items,
-            Summary: summary,
+        return new AuditExportSummaryResult(
+            TotalRecords: totalRecords,
             TotalRequestedAmount: totalRequestedAmount,
             TotalApprovedAmount: totalApprovedAmount,
+            Summary: summary,
             SiteName: siteName
+        );
+    }
+
+    public async IAsyncEnumerable<IReadOnlyList<AuditExpenseRowDto>> StreamAuditExpenseChunksAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
+        int chunkSize = 2000,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var effectiveChunkSize = Math.Clamp(chunkSize, 1, 5000);
+        var baseFiltered = BuildTenantAuditQuery(tenantId, filter);
+
+        DateTime? lastCreatedAt = null;
+        var seenIdsAtCursor = new List<Guid>();
+
+        while (!ct.IsCancellationRequested)
+        {
+            var chunkQuery = baseFiltered;
+            if (lastCreatedAt.HasValue)
+            {
+                var cursorTime = lastCreatedAt.Value;
+                var excluded = seenIdsAtCursor;
+                chunkQuery = chunkQuery.Where(p =>
+                    p.CreatedAtUtc < cursorTime ||
+                    (p.CreatedAtUtc == cursorTime && !excluded.Contains(p.Id)));
+            }
+
+            var rawChunk = await chunkQuery
+                .OrderByDescending(p => p.CreatedAtUtc)
+                .ThenByDescending(p => p.Id)
+                .Take(effectiveChunkSize)
+                .Select(p => new
+                {
+                    p.Id,
+                    SubmitterName = p.User != null ? p.User.FullName : "Unknown",
+                    SubmitterEmail = p.User != null && p.User.Email != null ? p.User.Email : "Unknown",
+                    SiteName = p.Site != null ? p.Site.Name : "Head Office / General",
+                    p.Title,
+                    p.Description,
+                    p.Category,
+                    p.RequestedAmount,
+                    p.Amount,
+                    p.Status,
+                    p.Currency,
+                    p.StartDate,
+                    p.EndDate,
+                    p.InvoiceNumber,
+                    p.CreatedAtUtc
+                })
+                .ToListAsync(ct);
+
+            if (rawChunk.Count == 0)
+            {
+                yield break;
+            }
+
+            var mappedChunk = rawChunk.Select(p => new AuditExpenseRowDto(
+                Id: p.Id,
+                SubmitterName: p.SubmitterName,
+                SubmitterEmail: p.SubmitterEmail,
+                SiteName: string.IsNullOrWhiteSpace(p.SiteName) ? "Head Office / General" : p.SiteName,
+                Title: p.Title,
+                Description: string.IsNullOrWhiteSpace(p.Description) ? "-" : p.Description,
+                Category: p.Category,
+                RequestedAmount: p.RequestedAmount > 0m ? p.RequestedAmount : p.Amount,
+                ApprovedAmount: p.Status == PaymentStatus.Approved || p.Status == PaymentStatus.Completed
+                    ? p.Amount
+                    : (decimal?)null,
+                Currency: p.Currency,
+                StartDate: p.StartDate,
+                EndDate: p.EndDate,
+                StatusName: p.Status.ToString(),
+                InvoiceNumber: string.IsNullOrWhiteSpace(p.InvoiceNumber) ? "-" : p.InvoiceNumber
+            )).ToList();
+
+            yield return mappedChunk;
+
+            if (rawChunk.Count < effectiveChunkSize)
+            {
+                yield break;
+            }
+
+            var nextCursorTime = rawChunk[^1].CreatedAtUtc;
+            var idsAtTime = rawChunk
+                .Where(x => x.CreatedAtUtc == nextCursorTime)
+                .Select(x => x.Id)
+                .ToList();
+
+            if (lastCreatedAt.HasValue && nextCursorTime == lastCreatedAt.Value)
+            {
+                seenIdsAtCursor.AddRange(idsAtTime);
+            }
+            else
+            {
+                lastCreatedAt = nextCursorTime;
+                seenIdsAtCursor = idsAtTime;
+            }
+        }
+    }
+
+    public async Task<AuditExportDataResult> GetAuditExportDataAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
+        CancellationToken ct = default)
+    {
+        var summaryResult = await GetAuditExportSummaryAsync(tenantId, filter, ct);
+        var filtered = BuildTenantAuditQuery(tenantId, filter);
+
+        var items = await filtered
+            .OrderByDescending(p => p.StartDate)
+            .ThenByDescending(p => p.CreatedAtUtc)
+            .Include(p => p.User)
+            .Include(p => p.Site)
+            .Include(p => p.Labourer)
+            .ToListAsync(ct);
+
+        return new AuditExportDataResult(
+            Items: items,
+            Summary: summaryResult.Summary,
+            TotalRequestedAmount: summaryResult.TotalRequestedAmount,
+            TotalApprovedAmount: summaryResult.TotalApprovedAmount,
+            SiteName: summaryResult.SiteName
         );
     }
 

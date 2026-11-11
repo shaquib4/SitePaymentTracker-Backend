@@ -13,6 +13,14 @@ public record PagedPaymentEntitiesResult(
     PaymentPagedSummaryDto Summary
 );
 
+public record AuditExportSummaryResult(
+    int TotalRecords,
+    decimal TotalRequestedAmount,
+    decimal TotalApprovedAmount,
+    PaymentPagedSummaryDto Summary,
+    string? SiteName
+);
+
 public record AuditExportDataResult(
     IReadOnlyList<PaymentRequest> Items,
     PaymentPagedSummaryDto Summary,
@@ -38,6 +46,15 @@ public interface IPaymentRepository
     Task<AuditExportDataResult> GetAuditExportDataAsync(
         Guid tenantId,
         AuditExportFilter filter,
+        CancellationToken ct = default);
+    Task<AuditExportSummaryResult> GetAuditExportSummaryAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
+        CancellationToken ct = default);
+    IAsyncEnumerable<IReadOnlyList<AuditExpenseRowDto>> StreamAuditExpenseChunksAsync(
+        Guid tenantId,
+        AuditExportFilter filter,
+        int chunkSize = 2000,
         CancellationToken ct = default);
     Task<IReadOnlyList<PaymentRequest>> GetPaymentsByYearAsync(int year, CancellationToken ct = default);
     Task<IReadOnlyList<PaymentRequest>> GetPaymentsForExportAsync(Guid tenantId, int year, CancellationToken ct = default);

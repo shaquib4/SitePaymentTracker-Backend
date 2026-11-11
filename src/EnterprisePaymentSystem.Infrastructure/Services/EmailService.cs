@@ -1,12 +1,15 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Mail;
 using System.Text;
 using System.Text.Json;
+using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Interfaces;
+using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using MimeKit;
 
 namespace EnterprisePaymentSystem.Infrastructure.Services;
 
@@ -28,19 +31,54 @@ public class EmailService : IEmailService
         _logger = logger;
     }
 
+    public EmailConfigurationStatusDto GetConfigurationStatus()
+    {
+        var resendKey = GetConfig("Email:ResendApiKey", "RESEND_API_KEY");
+        if (!string.IsNullOrWhiteSpace(resendKey))
+        {
+            var fromAddr = GetConfig("Email:FromAddress", "EMAIL_FROM") ?? "onboarding@resend.dev";
+            return new EmailConfigurationStatusDto(
+                IsConfigured: true,
+                Provider: "Resend",
+                FromAddress: fromAddr,
+                Message: $"Resend API active (sending from {fromAddr}).");
+        }
+
+        var smtpHost = GetConfig("Email:SmtpHost", "SMTP_HOST");
+        if (!string.IsNullOrWhiteSpace(smtpHost))
+        {
+            var smtpPort = int.TryParse(GetConfig("Email:SmtpPort", "SMTP_PORT"), out var p) ? p : 587;
+            var smtpUser = GetConfig("Email:SmtpUser", "SMTP_USER", "SMTP_USERNAME");
+            var fromAddr = GetConfig("Email:FromAddress", "EMAIL_FROM", "SMTP_FROM") ?? smtpUser;
+            return new EmailConfigurationStatusDto(
+                IsConfigured: true,
+                Provider: "SMTP",
+                FromAddress: fromAddr,
+                Message: $"SMTP configured ({smtpHost}:{smtpPort} as {fromAddr ?? smtpHost}).");
+        }
+
+        return new EmailConfigurationStatusDto(
+            IsConfigured: false,
+            Provider: "None",
+            FromAddress: null,
+            Message: "Email delivery not configured on server. Add Email__ResendApiKey or Email__SmtpHost / Email__SmtpUser / Email__SmtpPassword in Render Environment Variables to receive inbox emails.");
+    }
+
     public async Task<EmailDispatchResult> SendAuditReportReadyEmailAsync(
         AuditEmailNotification notification,
         CancellationToken ct = default)
     {
         var subject = $"Audit Pack Ready: {notification.ReportTitle} ({notification.PeriodLabel})";
         var htmlBody = BuildHtmlBody(notification);
+        var fromName = GetConfig("Email:FromName", "EMAIL_FROM_NAME") ?? "Khan Enterprises Audit";
 
-        var resendApiKey = _configuration["Email:ResendApiKey"];
-        var fromAddress = _configuration["Email:FromAddress"] ?? "Khan Enterprises Audit <onboarding@resend.dev>";
-
-        // 1. Try Resend REST API if configured
+        // 1. Try Resend REST API
+        var resendApiKey = GetConfig("Email:ResendApiKey", "RESEND_API_KEY");
         if (!string.IsNullOrWhiteSpace(resendApiKey))
         {
+            var rawFrom = GetConfig("Email:FromAddress", "EMAIL_FROM") ?? "onboarding@resend.dev";
+            var formattedFrom = rawFrom.Contains('<') ? rawFrom : $"{fromName} <{rawFrom}>";
+
             try
             {
                 var client = _httpClientFactory.CreateClient("EmailClient");
@@ -48,7 +86,7 @@ public class EmailService : IEmailService
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resendApiKey);
                 var payload = new
                 {
-                    from = fromAddress,
+                    from = formattedFrom,
                     to = new[] { notification.RecipientEmail },
                     subject,
                     html = htmlBody
@@ -57,72 +95,100 @@ public class EmailService : IEmailService
                 var resp = await client.SendAsync(req, ct);
                 if (resp.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Audit Pack email dispatched via Resend to {Email}", notification.RecipientEmail);
+                    _logger.LogInformation("Audit Pack email sent via Resend to {Email}", notification.RecipientEmail);
                     return new EmailDispatchResult(true, $"Email sent via Resend to {notification.RecipientEmail}");
                 }
 
                 var errorBody = await resp.Content.ReadAsStringAsync(ct);
                 _logger.LogWarning("Resend API returned {StatusCode}: {Body}", resp.StatusCode, errorBody);
-                return new EmailDispatchResult(false, $"Resend returned {(int)resp.StatusCode}; files saved in Audit Files.");
+                return new EmailDispatchResult(false, $"Resend returned {(int)resp.StatusCode} ({ExtractResendHint(errorBody)}); files ready in Audit Files.");
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Resend delivery failed for {Email}", notification.RecipientEmail);
-                return new EmailDispatchResult(false, $"Email delivery error ({ex.Message}); files saved in Audit Files.");
+                return new EmailDispatchResult(false, $"Resend failed ({ex.Message}); files ready in Audit Files.");
             }
         }
 
-        // 2. Try SMTP if configured
-        var smtpHost = _configuration["Email:SmtpHost"];
+        // 2. Try MailKit SMTP (supports port 465 SSL, 587 STARTTLS, Gmail App Passwords, Outlook, etc.)
+        var smtpHost = GetConfig("Email:SmtpHost", "SMTP_HOST");
         if (!string.IsNullOrWhiteSpace(smtpHost))
         {
+            var smtpPort = int.TryParse(GetConfig("Email:SmtpPort", "SMTP_PORT"), out var p) ? p : 587;
+            var smtpUser = GetConfig("Email:SmtpUser", "SMTP_USER", "SMTP_USERNAME");
+            var smtpPassword = GetConfig("Email:SmtpPassword", "SMTP_PASSWORD", "SMTP_PASS");
+            var fromAddress = GetConfig("Email:FromAddress", "EMAIL_FROM", "SMTP_FROM") ?? smtpUser;
+
+            if (string.IsNullOrWhiteSpace(fromAddress))
+            {
+                return new EmailDispatchResult(false, "SMTP FromAddress/SmtpUser missing; files ready in Audit Files.");
+            }
+
             try
             {
-                var smtpPort = int.TryParse(_configuration["Email:SmtpPort"], out var p) ? p : 587;
-                var smtpUser = _configuration["Email:SmtpUser"];
-                var smtpPassword = _configuration["Email:SmtpPassword"];
-                var enableSsl = !bool.TryParse(_configuration["Email:EnableSsl"], out var ssl) || ssl;
+                var message = new MimeMessage();
+                message.From.Add(new MailboxAddress(fromName, fromAddress));
+                message.To.Add(MailboxAddress.Parse(notification.RecipientEmail));
+                message.Subject = subject;
+                message.Body = new BodyBuilder { HtmlBody = htmlBody }.ToMessageBody();
 
-                using var message = new MailMessage
-                {
-                    From = new MailAddress(fromAddress),
-                    Subject = subject,
-                    Body = htmlBody,
-                    IsBodyHtml = true
-                };
-                message.To.Add(notification.RecipientEmail);
+                var enableSslConfig = GetConfig("Email:EnableSsl", "SMTP_ENABLE_SSL");
+                var enableSsl = string.IsNullOrWhiteSpace(enableSslConfig) || bool.Parse(enableSslConfig);
 
-                using var smtpClient = new SmtpClient(smtpHost, smtpPort)
-                {
-                    EnableSsl = enableSsl
-                };
+                var socketOption = smtpPort == 465
+                    ? SecureSocketOptions.SslOnConnect
+                    : (enableSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+
+                using var smtpClient = new SmtpClient();
+                await smtpClient.ConnectAsync(smtpHost, smtpPort, socketOption, ct);
                 if (!string.IsNullOrWhiteSpace(smtpUser))
                 {
-                    smtpClient.Credentials = new NetworkCredential(smtpUser, smtpPassword ?? string.Empty);
+                    await smtpClient.AuthenticateAsync(smtpUser, smtpPassword ?? string.Empty, ct);
                 }
+                await smtpClient.SendAsync(new MailKit.SendRequest(message), ct);
+                await smtpClient.DisconnectAsync(true, ct);
 
-                await smtpClient.SendMailAsync(message, ct);
-                _logger.LogInformation("Audit Pack email dispatched via SMTP to {Email}", notification.RecipientEmail);
+                _logger.LogInformation("Audit Pack email sent via SMTP ({Host}:{Port}) to {Email}", smtpHost, smtpPort, notification.RecipientEmail);
                 return new EmailDispatchResult(true, $"Email sent via SMTP to {notification.RecipientEmail}");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "SMTP delivery failed for {Email}", notification.RecipientEmail);
-                return new EmailDispatchResult(false, $"SMTP delivery error ({ex.Message}); files saved in Audit Files.");
+                _logger.LogWarning(ex, "SMTP delivery failed for {Email} via {Host}:{Port}", notification.RecipientEmail, smtpHost, smtpPort);
+                return new EmailDispatchResult(false, $"SMTP failed ({ex.Message}); files ready in Audit Files.");
             }
         }
 
-        // 3. Structured simulation fallback when no mail provider key is configured
-        _logger.LogInformation(
-            "[Simulated Email Dispatch] To: {Email} | Subject: {Subject} | PDF: {PdfUrl} | Excel: {ExcelUrl}",
-            notification.RecipientEmail,
-            subject,
-            notification.PdfDownloadUrl,
-            notification.ExcelDownloadUrl);
+        // 3. Honest reporting when server has no mail provider configured
+        _logger.LogWarning(
+            "[Email Not Configured] Cannot email Audit Pack to {Email} because Email:ResendApiKey and Email:SmtpHost are empty.",
+            notification.RecipientEmail);
 
         return new EmailDispatchResult(
-            true,
-            $"Dispatched to {notification.RecipientEmail} (Mail preview logged; download anytime in Audit Files)");
+            false,
+            $"Email not sent: Server mail provider not configured (files ready in Audit Files for {notification.RecipientEmail}).");
+    }
+
+    private string? GetConfig(params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = _configuration[key];
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+        return null;
+    }
+
+    private static string ExtractResendHint(string responseBody)
+    {
+        if (responseBody.Contains("testing emails", StringComparison.OrdinalIgnoreCase) ||
+            responseBody.Contains("verify a domain", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Resend sandbox only permits verified sender domains";
+        }
+        return "check API key / sender domain";
     }
 
     private static string BuildHtmlBody(AuditEmailNotification n)
@@ -144,7 +210,7 @@ public class EmailService : IEmailService
                 <a href="{WebUtility.HtmlEncode(n.PdfDownloadUrl)}" style="display:inline-block;background:#f59e0b;color:#0f172a;font-weight:700;padding:10px 16px;border-radius:8px;text-decoration:none;margin-right:10px;">Download Breakdown (PDF)</a>
                 <a href="{WebUtility.HtmlEncode(n.ExcelDownloadUrl)}" style="display:inline-block;background:#10b981;color:#0f172a;font-weight:700;padding:10px 16px;border-radius:8px;text-decoration:none;">Download Expenses (Excel)</a>
               </div>
-              <p style="font-size:12px;color:#94a3b8;">You can also access all generated files from the Admin Portal <a href="{WebUtility.HtmlEncode(n.AuditFilesPortalUrl)}" style="color:#fbbf24;">Audit Files section</a>.</p>
+              <p style="font-size:12px;color:#94a3b8;">Note: Each file is automatically cleared from server database storage once downloaded. You can click <strong>Regenerate</strong> anytime in the <a href="{WebUtility.HtmlEncode(n.AuditFilesPortalUrl)}" style="color:#fbbf24;">Audit Files section</a> using your saved period &amp; filter details.</p>
             </div>
             """;
     }

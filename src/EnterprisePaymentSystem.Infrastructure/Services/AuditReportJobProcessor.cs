@@ -1,5 +1,4 @@
 using EnterprisePaymentSystem.Application.DTOs;
-using EnterprisePaymentSystem.Application.Helpers;
 using EnterprisePaymentSystem.Application.Interfaces;
 using EnterprisePaymentSystem.Application.Interfaces.Repositories;
 using EnterprisePaymentSystem.Domain.Enums;
@@ -11,6 +10,8 @@ namespace EnterprisePaymentSystem.Infrastructure.Services;
 
 public class AuditReportJobProcessor : IAuditReportJobProcessor
 {
+    private const int ExportChunkSize = 2000;
+
     private readonly IApplicationDbContext _context;
     private readonly IPaymentRepository _paymentRepository;
     private readonly IPdfBreakdownExportService _pdfService;
@@ -56,7 +57,9 @@ public class AuditReportJobProcessor : IAuditReportJobProcessor
             await _context.SaveChangesAsync(ct);
 
             var filter = job.AuditFilter ?? new AuditExportFilter(job.Year);
-            var exportData = await _paymentRepository.GetAuditExportDataAsync(job.TenantId, filter, ct);
+
+            // 1. SQL-only aggregation (handles 100,000+ rows with zero itemized entity load)
+            var exportSummary = await _paymentRepository.GetAuditExportSummaryAsync(job.TenantId, filter, ct);
 
             var tenantName = await _context.Tenants
                 .IgnoreQueryFilters()
@@ -65,21 +68,20 @@ public class AuditReportJobProcessor : IAuditReportJobProcessor
                 .Select(t => t.Name)
                 .FirstOrDefaultAsync(ct) ?? job.TenantName;
 
-            if (!string.IsNullOrWhiteSpace(exportData.SiteName) && string.IsNullOrWhiteSpace(entity.SiteName))
+            if (!string.IsNullOrWhiteSpace(exportSummary.SiteName) && string.IsNullOrWhiteSpace(entity.SiteName))
             {
-                entity.SiteName = exportData.SiteName;
+                entity.SiteName = exportSummary.SiteName;
             }
 
-            var paymentDtos = exportData.Items.Select(PaymentMapper.MapToDto).ToList();
-
             var timestampSlug = DateTime.UtcNow.ToString("yyyyMMdd_HHmm");
-            var safePrefix = filter.SiteId.HasValue && !string.IsNullOrWhiteSpace(exportData.SiteName)
-                ? $"Site_{SanitizeFileSegment(exportData.SiteName)}"
+            var safePrefix = filter.SiteId.HasValue && !string.IsNullOrWhiteSpace(exportSummary.SiteName)
+                ? $"Site_{SanitizeFileSegment(exportSummary.SiteName)}"
                 : $"FY{filter.Year}";
 
             var pdfFileName = $"{safePrefix}_Breakdown_{timestampSlug}.pdf";
             var excelFileName = $"{safePrefix}_Expenses_{timestampSlug}.xlsx";
 
+            // 2. Generate executive Breakdown-only PDF from SQL summary
             var pdfBytes = _pdfService.GenerateBreakdownPdf(new PdfBreakdownContext(
                 JobReference: entity.Id.ToString("N")[..8].ToUpperInvariant(),
                 TenantName: tenantName,
@@ -92,32 +94,42 @@ public class AuditReportJobProcessor : IAuditReportJobProcessor
                 StatusFilter: entity.StatusFilter,
                 CategoryFilter: entity.CategoryFilter,
                 ExcelFileName: excelFileName,
-                TotalRecords: paymentDtos.Count,
-                TotalRequestedAmount: exportData.TotalRequestedAmount,
-                TotalApprovedAmount: exportData.TotalApprovedAmount,
-                Summary: exportData.Summary,
+                TotalRecords: exportSummary.TotalRecords,
+                TotalRequestedAmount: exportSummary.TotalRequestedAmount,
+                TotalApprovedAmount: exportSummary.TotalApprovedAmount,
+                Summary: exportSummary.Summary,
                 GeneratedAtUtc: DateTime.UtcNow
             ));
 
-            var excelBytes = _excelService.GenerateAuditExpensesExcel(
-                paymentDtos,
+            // 3. Stream matching rows in keyset chunks (2,000 rows/chunk) directly into SAX OpenXML .xlsx
+            var rowChunks = _paymentRepository.StreamAuditExpenseChunksAsync(
+                job.TenantId,
+                filter,
+                ExportChunkSize,
+                ct);
+
+            var excelBytes = await _excelService.GenerateChunkedAuditExpensesExcelAsync(
+                rowChunks,
                 tenantName,
                 filter.Year,
                 entity.PeriodLabel,
-                entity.FilterSummary);
+                entity.FilterSummary,
+                ct);
 
-            entity.TotalRecords = paymentDtos.Count;
-            entity.TotalRequestedAmount = exportData.TotalRequestedAmount;
-            entity.TotalApprovedAmount = exportData.TotalApprovedAmount;
+            entity.TotalRecords = exportSummary.TotalRecords;
+            entity.TotalRequestedAmount = exportSummary.TotalRequestedAmount;
+            entity.TotalApprovedAmount = exportSummary.TotalApprovedAmount;
             entity.PdfFileName = pdfFileName;
             entity.ExcelFileName = excelFileName;
             entity.PdfBytes = pdfBytes;
             entity.ExcelBytes = excelBytes;
+            entity.PdfDownloadedAtUtc = null;
+            entity.ExcelDownloadedAtUtc = null;
             entity.Status = AuditReportStatus.Completed;
             entity.CompletedAtUtc = DateTime.UtcNow;
 
-            var apiBase = (job.BaseApiUrl ?? _configuration["Email:PublicApiBaseUrl"] ?? "").TrimEnd('/');
-            var frontendBase = (job.FrontendUrl ?? _configuration["Email:FrontendUrl"] ?? "https://khan-enterprises-payment-tracker.onrender.com").TrimEnd('/');
+            var apiBase = (job.BaseApiUrl ?? _configuration["Email:PublicApiBaseUrl"] ?? _configuration["PUBLIC_API_BASE_URL"] ?? "").TrimEnd('/');
+            var frontendBase = (job.FrontendUrl ?? _configuration["Email:FrontendUrl"] ?? _configuration["FRONTEND_URL"] ?? "https://site-payment-tracker-frontend.vercel.app").TrimEnd('/');
             var tokenQuery = Uri.EscapeDataString(entity.DownloadToken);
 
             var pdfUrl = $"{apiBase}/api/reports/admin-files/{entity.Id}/download/pdf?token={tokenQuery}";
@@ -165,6 +177,7 @@ public class AuditReportJobProcessor : IAuditReportJobProcessor
         {
             cleaned = cleaned.Replace("__", "_", StringComparison.Ordinal);
         }
-        return cleaned.Trim('_').Length > 32 ? cleaned.Trim('_')[..32] : cleaned.Trim('_');
+        var trimmed = cleaned.Trim('_');
+        return trimmed.Length > 32 ? trimmed[..32] : trimmed;
     }
 }

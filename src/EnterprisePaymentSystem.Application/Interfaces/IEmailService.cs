@@ -21,6 +21,8 @@ public record EmailDispatchResult(bool Dispatched, string DeliveryNote);
 
 public interface IEmailService
 {
+    EmailConfigurationStatusDto GetConfigurationStatus();
+
     Task<EmailDispatchResult> SendAuditReportReadyEmailAsync(
         AuditEmailNotification notification,
         CancellationToken ct = default);

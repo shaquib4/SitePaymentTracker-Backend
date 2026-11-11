@@ -38,6 +38,9 @@ public class AuditReportJob
     public bool EmailDispatched { get; set; }
     public string? EmailDeliveryNote { get; set; }
 
+    public DateTime? PdfDownloadedAtUtc { get; set; }
+    public DateTime? ExcelDownloadedAtUtc { get; set; }
+
     public DateTime QueuedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAtUtc { get; set; }
     public string? ErrorMessage { get; set; }

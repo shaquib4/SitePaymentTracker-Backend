@@ -25,4 +25,22 @@ services:
         value: EnterprisePaymentSystemClient
       - key: Database__UsePostgres
         value: "true"
+      - key: Email__PublicApiBaseUrl
+        value: "https://sitepaymenttracker-backend.onrender.com"
+      - key: Email__FrontendUrl
+        value: "https://site-payment-tracker-frontend.vercel.app"
+      - key: Email__FromName
+        value: "Khan Enterprises Audit"
+      - key: Email__ResendApiKey
+        sync: false
+      - key: Email__SmtpHost
+        sync: false
+      - key: Email__SmtpPort
+        value: "587"
+      - key: Email__SmtpUser
+        sync: false
+      - key: Email__SmtpPassword
+        sync: false
+      - key: Email__FromAddress
+        sync: false
 

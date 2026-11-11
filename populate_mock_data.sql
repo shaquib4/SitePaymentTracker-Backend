@@ -143,7 +143,7 @@ INSERT INTO "PaymentRequests" (
     9800.00, 2026, '2026-11-01', '2026-11-06', NOW() - INTERVAL '1 day',
     0, '10000000-0000-0000-0000-000000000004', '55555555-5555-5555-5555-555555555555',
     'Labour Wage Payout: Santosh Paswan', '14 days scaffolding setup on pier 14',
-    NULL, 'INR', NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day', 0
+    NULL, 'INR', NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day', 1
 );
 
 -- 4.8 Supervisor Logistics Reimbursement (PENDING - 4,200. Must NOT appear in pie charts!)
@@ -157,7 +157,7 @@ INSERT INTO "PaymentRequests" (
     4200.00, 2026, '2026-11-05', '2026-11-05', NOW() - INTERVAL '2 days',
     0, NULL, '44444444-4444-4444-4444-444444444444',
     'Tempo Freight Charges for Scaffolding Pipes', 'Emergency local transport of 120 steel pipes from central warehouse',
-    NULL, 'INR', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days', 0
+    NULL, 'INR', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days', 1
 );
 
 -- 5. Payment Audit Logs (Immutable audit tracking)

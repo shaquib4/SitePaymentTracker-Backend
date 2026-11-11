@@ -72,6 +72,6 @@ public class UpdatePaymentRequestValidator : AbstractValidator<UpdatePaymentRequ
             .WithMessage("EndDate cannot be earlier than StartDate.");
 
         RuleFor(x => x.Version)
-            .GreaterThan(0u).WithMessage("Concurrency Version token is required for updates.");
+            .GreaterThanOrEqualTo(0u).WithMessage("Concurrency Version token is required for updates.");
     }
 }

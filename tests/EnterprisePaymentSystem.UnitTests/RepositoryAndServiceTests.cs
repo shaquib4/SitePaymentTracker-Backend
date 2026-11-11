@@ -526,4 +526,70 @@ public class RepositoryAndServiceTests
             page.Summary.TotalApprovedAmount.Should().Be(4500m);
         }
     }
+
+    [Fact]
+    public async Task PaymentService_Approve_LegacyVersionZero_ShouldSucceedWithMatchingVersionZero()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var employeeId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+
+        using (var context = CreateInMemoryDbContext(dbName, _tenantA))
+        {
+            await context.PaymentRequests.AddAsync(new PaymentRequest
+            {
+                Id = paymentId,
+                TenantId = _tenantA,
+                UserId = employeeId,
+                Title = "Tempo Freight Charges",
+                Description = "Legacy seed row",
+                RequestedAmount = 0m,
+                Amount = 4200m,
+                Currency = "INR",
+                Category = "Transport & Logistics",
+                ExpenseYear = 2026,
+                StartDate = new DateOnly(2026, 11, 5),
+                EndDate = new DateOnly(2026, 11, 5),
+                Status = PaymentStatus.Pending,
+                Version = 0u
+            });
+            await context.SaveChangesAsync();
+        }
+
+        using (var context = CreateInMemoryDbContext(dbName, _tenantA))
+        {
+            var repo = new PaymentRepository(context);
+            var adminUser = new Mock<ICurrentUserService>();
+            adminUser.Setup(s => s.TenantId).Returns(_tenantA);
+            adminUser.Setup(s => s.UserId).Returns(adminId);
+            adminUser.Setup(s => s.FullName).Returns("Admin Approver");
+            adminUser.Setup(s => s.Role).Returns(nameof(UserRole.Admin));
+
+            var service = new PaymentService(
+                repo,
+                adminUser.Object,
+                new PaymentCalculationHelper(),
+                new AuditTrailHelper(),
+                new DateRangeHelper()
+            );
+
+            var result = await service.ApproveAsync(paymentId, new ApprovePaymentRequest(
+                Comments: "Verified freight challan",
+                OverrideCategoryId: null,
+                NewCategoryName: null,
+                OverrideSiteId: null,
+                Version: 0u,
+                ApprovedAmount: 3200m,
+                UpdatedDescription: "Edited freight note"
+            ));
+
+            result.Status.Should().Be(PaymentStatus.Approved);
+            result.RequestedAmount.Should().Be(4200m);
+            result.ApprovedAmount.Should().Be(3200m);
+            result.Amount.Should().Be(3200m);
+            result.Description.Should().Be("Edited freight note");
+            result.Version.Should().Be(1u);
+        }
+    }
 }

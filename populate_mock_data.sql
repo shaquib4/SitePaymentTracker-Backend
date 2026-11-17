@@ -20,7 +20,7 @@ VALUES
 ON CONFLICT ("Id") DO UPDATE SET "ContractValue" = 3200000.00, "IsActive" = TRUE;
 
 -- 2. Users (Accountant with optional NULL email, Supervisor with optional NULL email, Vendor)
--- Password for all is Password123! ($2a$11$ooRMTtAZRiOqLjebkXH9Du5zXm.nJzic3UDSHKWyW/0QxhQ.ceGfC)
+-- Development fixture only. Never run this mock-data script against production.
 INSERT INTO "Users" ("Id", "TenantId", "FullName", "Email", "SixDigitUserId", "PhoneNumber", "Role", "Department", "PasswordHash", "IsActive", "CreatedAtUtc")
 VALUES
 -- Accountant (No email provided - demonstrates optional email!)

@@ -24,6 +24,8 @@ public class SitesController : ControllerBase
 
     public record CreateSiteRequest(string Name, string Location, decimal? ContractValue = null);
 
+    public record SiteLookupDto(Guid Id, string Name, string Location, bool IsActive, DateTime CreatedAtUtc);
+
     public record UploadMbRequest(int Month, int Year, decimal TotalEstimatedValue, string? ExcelFileUrl);
 
     public record RecordSiteSettlementRequest(
@@ -89,11 +91,15 @@ public class SitesController : ControllerBase
     );
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Site>>> GetSites(CancellationToken ct)
+    [Authorize(Roles = "Admin,Accountant,Supervisor,OfficeWorker")]
+    public async Task<ActionResult<IEnumerable<SiteLookupDto>>> GetSites(CancellationToken ct)
     {
+        var tenantId = _currentUserService.TenantId ?? throw new UnauthorizedAccessException();
         var list = await _context.Sites
-            .Where(s => s.IsActive)
+            .AsNoTracking()
+            .Where(s => s.TenantId == tenantId && s.IsActive)
             .OrderBy(s => s.Name)
+            .Select(s => new SiteLookupDto(s.Id, s.Name, s.Location, s.IsActive, s.CreatedAtUtc))
             .ToListAsync(ct);
 
         return Ok(list);

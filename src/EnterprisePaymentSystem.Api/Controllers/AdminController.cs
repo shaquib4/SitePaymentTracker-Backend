@@ -7,7 +7,7 @@ namespace EnterprisePaymentSystem.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "FinanceAdmin,TenantAdmin")]
+[Authorize(Roles = "Admin")]
 public class AdminController : ControllerBase
 {
     private readonly IPaymentService _paymentService;

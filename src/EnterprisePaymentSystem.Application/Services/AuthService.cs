@@ -32,14 +32,9 @@ public class AuthService : IAuthService
         }
 
         var user = await _userRepository.GetByEmailAsync(request.Email, ct);
-        if (user == null || !_passwordHasher.VerifyPassword(request.Password, user.PasswordHash))
+        if (user == null || !_passwordHasher.VerifyPassword(request.Password, user.PasswordHash) || !user.IsActive)
         {
             throw new UnauthorizedAccessException("Invalid email or password.");
-        }
-
-        if (!user.IsActive)
-        {
-            throw new UnauthorizedAccessException("Your user account has been deactivated.");
         }
 
         var tenantName = user.Tenant?.Name ?? "Organization";

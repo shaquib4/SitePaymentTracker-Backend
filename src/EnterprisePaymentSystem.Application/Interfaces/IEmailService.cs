@@ -12,8 +12,6 @@ public record AuditEmailNotification(
     int TotalRecords,
     decimal TotalRequestedAmount,
     decimal TotalApprovedAmount,
-    string PdfDownloadUrl,
-    string ExcelDownloadUrl,
     string AuditFilesPortalUrl
 );
 

@@ -8,7 +8,7 @@ namespace EnterprisePaymentSystem.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
+[Authorize(Roles = "Admin,Accountant,Supervisor,OfficeWorker")]
 public class CategoriesController : ControllerBase
 {
     private readonly IApplicationDbContext _context;

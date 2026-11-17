@@ -207,10 +207,9 @@ public class EmailService : IEmailService
                 <p style="margin:4px 0;"><strong>Requested Total:</strong> {reqAmt} | <strong>Approved &amp; Disbursed:</strong> {appAmt}</p>
               </div>
               <div style="margin:20px 0;">
-                <a href="{WebUtility.HtmlEncode(n.PdfDownloadUrl)}" style="display:inline-block;background:#f59e0b;color:#0f172a;font-weight:700;padding:10px 16px;border-radius:8px;text-decoration:none;margin-right:10px;">Download Breakdown (PDF)</a>
-                <a href="{WebUtility.HtmlEncode(n.ExcelDownloadUrl)}" style="display:inline-block;background:#10b981;color:#0f172a;font-weight:700;padding:10px 16px;border-radius:8px;text-decoration:none;">Download Expenses (Excel)</a>
+                <a href="{WebUtility.HtmlEncode(n.AuditFilesPortalUrl)}" style="display:inline-block;background:#f59e0b;color:#0f172a;font-weight:700;padding:10px 16px;border-radius:8px;text-decoration:none;">Open Payment Tracker</a>
               </div>
-              <p style="font-size:12px;color:#94a3b8;">Note: Each file is automatically cleared from server database storage once downloaded. You can click <strong>Regenerate</strong> anytime in the <a href="{WebUtility.HtmlEncode(n.AuditFilesPortalUrl)}" style="color:#fbbf24;">Audit Files section</a> using your saved period &amp; filter details.</p>
+              <p style="font-size:12px;color:#94a3b8;">Sign in with your Admin account, then open Audit Files to download or regenerate these reports. Each file is cleared from server storage after download.</p>
             </div>
             """;
     }

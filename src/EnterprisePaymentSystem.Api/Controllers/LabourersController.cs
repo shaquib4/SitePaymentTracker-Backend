@@ -10,7 +10,7 @@ namespace EnterprisePaymentSystem.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
+[Authorize(Roles = "Admin,Supervisor")]
 public class LabourersController : ControllerBase
 {
     private readonly IApplicationDbContext _context;
@@ -246,6 +246,17 @@ public class LabourersController : ControllerBase
             assignedSupervisorId = currentUserId;
         }
 
+        if (request.SiteId.HasValue && !await _context.Sites.AnyAsync(
+                s => s.Id == request.SiteId.Value && s.TenantId == tenantId && s.IsActive, ct))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid site",
+                Detail = "The selected site is not active in your organization.",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
         var labourer = new Labourer
         {
             TenantId = tenantId,
@@ -324,6 +335,17 @@ public class LabourersController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Name))
         {
             labourer.Name = request.Name.Trim();
+        }
+
+        if (request.SiteId.HasValue && !await _context.Sites.AnyAsync(
+                s => s.Id == request.SiteId.Value && s.TenantId == tenantId && s.IsActive, ct))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid site",
+                Detail = "The selected site is not active in your organization.",
+                Status = StatusCodes.Status400BadRequest
+            });
         }
 
         if (request.DailyWageRate > 0)

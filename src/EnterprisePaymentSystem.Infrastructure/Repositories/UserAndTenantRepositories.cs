@@ -17,14 +17,16 @@ public class UserRepository : IUserRepository
     public async Task<User?> GetByEmailAsync(string email, CancellationToken ct = default)
     {
         var cleanInput = email.Trim().ToLower();
-        return await _context.Users
+        var matches = await _context.Users
             .IgnoreQueryFilters()
             .Include(u => u.Tenant)
-            .FirstOrDefaultAsync(u => 
-                (u.Email != null && u.Email.ToLower() == cleanInput) || 
-                u.SixDigitUserId == email.Trim() || 
-                u.FullName.ToLower() == cleanInput ||
-                u.FullName.ToLower().Replace(" ", "") == cleanInput, ct);
+            .Where(u => (u.Email != null && u.Email.ToLower() == cleanInput) || u.SixDigitUserId == email.Trim())
+            .Take(2)
+            .ToListAsync(ct);
+
+        // Identifiers must resolve to exactly one account across tenants. Never pick the first
+        // match when a six-digit ID or email was duplicated in another tenant.
+        return matches.Count == 1 ? matches[0] : null;
     }
 
     public async Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default)

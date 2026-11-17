@@ -34,31 +34,31 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
 
         // Global Query Filters for Multi-Tenancy Isolation
         modelBuilder.Entity<PaymentRequest>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<PaymentAuditLog>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<User>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<ExpenseCategory>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<Site>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<Labourer>().HasQueryFilter(e =>
-            (CurrentTenantId == null || e.TenantId == CurrentTenantId) && !e.IsDeleted);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId && !e.IsDeleted);
 
         modelBuilder.Entity<MeasurementBook>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<PeriodAccessRequest>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<AuditReportJob>().HasQueryFilter(e =>
-            CurrentTenantId == null || e.TenantId == CurrentTenantId);
+            CurrentTenantId != null && e.TenantId == CurrentTenantId);
 
         // Tenant Configuration
         modelBuilder.Entity<Tenant>(b =>

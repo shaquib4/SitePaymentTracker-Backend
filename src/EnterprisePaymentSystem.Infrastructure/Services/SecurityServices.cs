@@ -19,10 +19,14 @@ public class JwtTokenGenerator : IJwtTokenGenerator
 
     public string GenerateToken(User user, string tenantName)
     {
-        var secret = _configuration["Jwt:Secret"] ?? "SuperSecretKeyForEnterprisePaymentSystem2026!MustBeAtLeast32Bytes";
+        var secret = _configuration["Jwt:Secret"];
+        if (string.IsNullOrWhiteSpace(secret) || Encoding.UTF8.GetByteCount(secret) < 32)
+        {
+            throw new InvalidOperationException("Jwt:Secret must be configured with at least 32 bytes through a secret store or environment variable.");
+        }
         var issuer = _configuration["Jwt:Issuer"] ?? "EnterprisePaymentSystem";
         var audience = _configuration["Jwt:Audience"] ?? "EnterprisePaymentSystemClient";
-        var expiryHours = int.TryParse(_configuration["Jwt:ExpiryHours"], out var hours) ? hours : 24;
+        var expiryHours = int.TryParse(_configuration["Jwt:ExpiryHours"], out var hours) ? Math.Clamp(hours, 1, 12) : 8;
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

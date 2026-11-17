@@ -818,8 +818,7 @@ public class RepositoryAndServiceTests
                 It.Is<AuditEmailNotification>(n =>
                     n.RecipientEmail == "admin@khanenterprises.com" &&
                     n.TotalRecords == 1 &&
-                    n.PdfDownloadUrl.Contains("download/pdf?token=secure-test-token-123") &&
-                    n.ExcelDownloadUrl.Contains("download/xlsx?token=secure-test-token-123")),
+                    n.AuditFilesPortalUrl == "https://portal.khan.test"),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
     }

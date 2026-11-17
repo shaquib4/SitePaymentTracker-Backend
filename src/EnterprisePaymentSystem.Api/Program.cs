@@ -54,12 +54,6 @@ Log.Logger = new LoggerConfiguration()
         rollOnFileSizeLimit: true,
         retainedFileTimeLimit: TimeSpan.FromHours(12) // Strict 12-hour auto-delete policy
     ))
-    // Cloud SaaS Sink: Asynchronous HTTP sink streaming Warnings and Errors to Better Stack / Axiom
-    .WriteTo.Async(a => a.Http(
-        requestUri: "https://in-automate.betterstack.com/api/v1/logs", // Better Stack / Axiom HTTP Sink Placeholder
-        queueLimitBytes: 10 * 1024 * 1024,
-        restrictedToMinimumLevel: LogEventLevel.Warning
-    ))
     .CreateLogger();
 
 try
@@ -88,7 +82,7 @@ try
             var database = uri.AbsolutePath.TrimStart('/');
             var port = uri.Port > 0 ? uri.Port : 5432;
 
-            cs = $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
+            cs = $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=VerifyFull;Trust Server Certificate=false;";
         }
 
         try
@@ -111,10 +105,11 @@ try
                     csBuilder.Username = $"{csBuilder.Username}.{projectRef}";
                 }
 
-                csBuilder.SslMode = Npgsql.SslMode.Require;
-                return csBuilder.ConnectionString;
+                csBuilder.SslMode = Npgsql.SslMode.VerifyFull;
             }
 
+            // Require encryption and validate the server certificate for every PostgreSQL connection.
+            csBuilder.SslMode = Npgsql.SslMode.VerifyFull;
             return csBuilder.ConnectionString;
         }
         catch
@@ -133,6 +128,11 @@ try
 
     var usePostgres = builder.Configuration.GetValue<bool>("Database:UsePostgres")
                       || (!string.IsNullOrWhiteSpace(pgConnection) && pgConnection.Contains("Host="));
+
+    if (usePostgres && string.IsNullOrWhiteSpace(pgConnection))
+    {
+        throw new InvalidOperationException("PostgreSQL is enabled but no connection string is configured. Set ConnectionStrings__PostgreSqlConnection or DATABASE_URL.");
+    }
 
     if (usePostgres && !string.IsNullOrWhiteSpace(pgConnection))
     {
@@ -193,7 +193,11 @@ try
     builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
     builder.Services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
 
-    var jwtSecret = builder.Configuration["Jwt:Secret"] ?? "SuperSecretKeyForEnterprisePaymentSystem2026!MustBeAtLeast32Bytes";
+    var jwtSecret = builder.Configuration["Jwt:Secret"];
+    if (string.IsNullOrWhiteSpace(jwtSecret) || Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+    {
+        throw new InvalidOperationException("Jwt:Secret must be configured with at least 32 bytes through a secret store or environment variable.");
+    }
     var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "EnterprisePaymentSystem";
     var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "EnterprisePaymentSystemClient";
 
@@ -210,6 +214,43 @@ try
                 ValidAudience = jwtAudience,
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
                 ClockSkew = TimeSpan.Zero
+            };
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = async context =>
+                {
+                    var principal = context.Principal;
+                    var userId = principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                                 ?? principal?.FindFirst("sub")?.Value;
+                    var tenantId = principal?.FindFirst("tenant_id")?.Value;
+                    var role = principal?.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value
+                               ?? principal?.FindFirst("role")?.Value;
+
+                    if (!Guid.TryParse(userId, out var parsedUserId) ||
+                        !Guid.TryParse(tenantId, out var parsedTenantId) ||
+                        !Enum.TryParse<EnterprisePaymentSystem.Domain.Enums.UserRole>(role, true, out var parsedRole))
+                    {
+                        context.Fail("The access token is missing valid user, tenant, or role claims.");
+                        return;
+                    }
+
+                    // JWTs are self-contained, so check current account status and role on each
+                    // request. This immediately cuts off deactivated users and stale elevated roles.
+                    var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+                    var accountIsCurrent = await db.Users
+                        .IgnoreQueryFilters()
+                        .AnyAsync(user => user.Id == parsedUserId &&
+                                          user.TenantId == parsedTenantId &&
+                                          user.IsActive &&
+                                          user.Role == parsedRole,
+                            context.HttpContext.RequestAborted);
+                    if (!accountIsCurrent)
+                    {
+                        context.Fail("The account is inactive or its access role has changed.");
+                    }
+
+                    return;
+                }
             };
         });
 
@@ -252,23 +293,24 @@ try
 
     builder.Services.AddCors(options =>
     {
+        var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+        if (builder.Environment.IsDevelopment())
+        {
+            configuredOrigins = configuredOrigins
+                .Append("http://localhost:5173")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        else if (configuredOrigins.Length == 0)
+        {
+            throw new InvalidOperationException("Cors:AllowedOrigins must explicitly list trusted frontend origins outside Development.");
+        }
+
         options.AddPolicy("AllowFrontend", policy =>
         {
-            var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
-            if (configuredOrigins != null && configuredOrigins.Length > 0)
-            {
-                policy.WithOrigins(configuredOrigins)
-                      .AllowAnyHeader()
-                      .AllowAnyMethod()
-                      .AllowCredentials();
-            }
-            else
-            {
-                policy.SetIsOriginAllowed(_ => true)
-                      .AllowAnyHeader()
-                      .AllowAnyMethod()
-                      .AllowCredentials();
-            }
+            policy.WithOrigins(configuredOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
         });
     });
 
@@ -336,7 +378,7 @@ try
 
     app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-    if (app.Environment.IsDevelopment() || true)
+    if (app.Environment.IsDevelopment())
     {
         app.UseSwagger();
         app.UseSwaggerUI(c =>
@@ -354,7 +396,7 @@ try
     app.MapControllers().RequireRateLimiting("fixed-ip-policy");
 
     // Cloud Health Probe & Root Redirect
-    app.MapGet("/", () => Results.Redirect("/swagger"));
+    app.MapGet("/", () => Results.Redirect("/health"));
     app.MapGet("/health", () => Results.Ok(new
     {
         status = "Healthy",
@@ -369,7 +411,12 @@ try
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        await DbInitializer.SeedAsync(context, hasher, logger);
+        await DbInitializer.SeedAsync(
+            context,
+            hasher,
+            logger,
+            seedDemoData: app.Environment.IsDevelopment(),
+            demoPassword: builder.Configuration["Seed:DemoPassword"]);
     }
 
     Log.Information("Host configured successfully. Running application on configured ports...");

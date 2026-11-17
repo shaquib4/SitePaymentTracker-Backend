@@ -5,6 +5,7 @@ using EnterprisePaymentSystem.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 
 namespace EnterprisePaymentSystem.Api.Controllers;
 
@@ -108,7 +109,7 @@ public class UsersController : ControllerBase
     );
 
     [HttpGet]
-    [Authorize(Roles = "Admin,Accountant")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<PagedUsersResponseDto>> GetUsers(
         [FromQuery] UserRole? role = null,
         [FromQuery] string? search = null,
@@ -230,15 +231,17 @@ public class UsersController : ControllerBase
         }
 
         // Generate a random 6-digit User ID (e.g., 592314)
-        var random = new Random();
         string sixDigitId;
         do
         {
-            sixDigitId = random.Next(100000, 999999).ToString();
+            sixDigitId = RandomNumberGenerator.GetInt32(100000, 1_000_000).ToString();
         } while (await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.TenantId == tenantId && u.SixDigitUserId == sixDigitId, ct));
 
-        // Generate temporary password
-        var temporaryPassword = $"Build@{random.Next(1000, 9999)}!";
+        // Generate a one-time high-entropy temporary password (18 random bytes).
+        var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
         var passwordHash = _passwordHasher.HashPassword(temporaryPassword);
 
         var newUser = new User

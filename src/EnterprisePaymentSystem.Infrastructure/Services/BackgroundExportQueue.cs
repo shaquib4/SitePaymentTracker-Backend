@@ -28,7 +28,9 @@ public class BackgroundExportQueue : IBackgroundExportQueue
             job.Year,
             job.QueuedAtUtc,
             null,
-            null
+            null,
+            job.TenantId,
+            job.RequestedByUserId
         );
 
         await _queue.Writer.WriteAsync(job, cancellationToken);

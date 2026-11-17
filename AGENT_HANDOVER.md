@@ -69,18 +69,17 @@
 
 ---
 
-## 3. User Roles, Permissions & Demo Credentials
+## 3. User Roles and Permissions
 
-All test accounts use the default password: **`Password123!`**
+Do not store or publish demo passwords, employee login IDs, or personal contact details in this handover. Provision accounts through the Admin user-management flow and keep credentials in an approved secret manager.
 
-| Role | Demo User Name | Login Identifier | 6-Digit ID | Core Permissions & Scopes |
-| :--- | :--- | :--- | :--- | :--- |
-| **Admin** | Shaquib Khan | `khanshaquib21@gmail.com` | `749201` | Full administrative control: approve/reject claims directly in master ledger or site view, settle project sites, upload MBs, generate new 6-digit employee accounts, review Accountant period requests. |
-| **Accountant** | Ramesh Sharma | `521402` *(no email)* | `521402` | Read-only financial gatekeeper: verify vouchers, request clarifications, initiate own wage claims, export Excel ledgers, request access for historical years. |
-| **Supervisor** | Surendra Kumar | `616244` *(no email)* | `616244` | Site operations: onboard & manage labourers, submit weekly wage claims against daily rates, submit site material expenses, view site muster roll. |
-| **Office Worker** | Neha Sharma | `400004` / `officeworker@khanenterprises.com` | `400004` | **Self-service expense claims**: submit personal claims (travel, stationery, IT), track real-time approval status, audit personal historical payments with calendar period filters. Strictly isolated to own claims. |
-| **Vendor** | Apex Supplies | `918234` *(no email)* | `918234` | Vendor portal placeholder (Phase 2 expansion). |
-
+| Role | Access scope |
+| :--- | :--- |
+| **Admin** | Tenant-wide administration, approvals, and reporting. |
+| **Accountant** | Financial records within approved periods; may request clarifications and period access. |
+| **Supervisor** | Own payment requests and labourers assigned to that supervisor. |
+| **Office Worker** | Own expense claims and payment history. |
+| **Vendor** | No financial API access until a vendor portal is implemented. |
 ---
 
 ## 4. Key Functional Modules & Architectural Enhancements
@@ -268,6 +267,14 @@ npm run dev -- --host 0.0.0.0 --port 5173
 ---
 
 ## 7. Crucial Guidelines & Development Rules for Future Agents
+
+### Security and deployment configuration
+
+- PostgreSQL credentials and the JWT signing key must be supplied through the hosting secret store or environment variables. Set `DATABASE_URL` (or `ConnectionStrings__PostgreSqlConnection`) and `Jwt__Secret`; the JWT secret must contain at least 32 UTF-8 bytes. Set `Cors__AllowedOrigins` to the exact production frontend origin(s). The checked-in appsettings intentionally has no database password or JWT secret.
+- PostgreSQL connections require TLS with full server-certificate validation; do not add `Trust Server Certificate=true` to deployment settings.
+- The previously checked-in PostgreSQL credential and JWT key were exposed in repository history. Rotate the Supabase database password and replace the Render JWT secret before deployment. Replacing the JWT secret signs out every existing session. Review and deactivate any old demo/test accounts in the live database and issue new passwords.
+- Tenant query filters fail closed when tenant context is missing. JWT validation also checks that the account is still active and its role has not changed. Supervisors are restricted to their own payment requests and assigned labourers, including detail and wage-history routes; the API remains the enforcement boundary even if a client URL is edited manually.
+- Report and audit-file downloads require an authenticated Admin session and a job in that Admin's tenant. Do not reintroduce anonymous report download tokens or email links that grant file access.
 
 1. **Strictly Local Changes**: When requested not to push to remote (`git push origin main`), leave all changes local on the active `main` branch.
 2. **Tenant Branding Integrity**: The organization is strictly **Khan Enterprises**. Never introduce legacy SaaS branding or "Flat 30k" tags.

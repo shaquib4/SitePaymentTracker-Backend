@@ -5,6 +5,7 @@ using EnterprisePaymentSystem.Application.Interfaces.Repositories;
 using EnterprisePaymentSystem.Domain.Entities;
 using EnterprisePaymentSystem.Domain.Enums;
 using EnterprisePaymentSystem.Domain.Exceptions;
+using Microsoft.EntityFrameworkCore;
 
 namespace EnterprisePaymentSystem.Application.Services;
 
@@ -38,6 +39,8 @@ public class PaymentService : IPaymentService
         var tenantId = _currentUserService.TenantId ?? throw new DomainException("Tenant context is required.");
         var userId = _currentUserService.UserId ?? throw new DomainException("User context is required.");
         var userName = _currentUserService.FullName ?? "User";
+
+        await ValidatePaymentReferencesAsync(tenantId, request.SiteId, request.CategoryId, request.LabourerId, ct);
 
         if (!_dateRangeHelper.IsValidRange(request.StartDate, request.EndDate, request.ExpenseYear))
         {
@@ -106,6 +109,19 @@ public class PaymentService : IPaymentService
         }
 
         var description = ValidateAndNormalizeDescription(request.Description);
+        await ValidatePaymentReferencesAsync(tenantId, request.SiteId, null, request.LabourerId, ct);
+
+        var labourer = await _context!.Labourers.FirstOrDefaultAsync(
+            l => l.Id == request.LabourerId && l.TenantId == tenantId && l.IsActive,
+            ct);
+        if (labourer == null || labourer.SiteId != request.SiteId)
+        {
+            throw new DomainException("The selected labourer is not active at the selected site.");
+        }
+        if (_currentUserService.Role != nameof(UserRole.Admin) && labourer.SupervisorId != supervisorId)
+        {
+            throw new UnauthorizedAccessException("Supervisors can only submit wage requests for their own labourers.");
+        }
 
         var payment = new PaymentRequest
         {
@@ -152,6 +168,12 @@ public class PaymentService : IPaymentService
         var payment = await _paymentRepository.GetByIdWithAuditLogsAsync(id, ct)
             ?? throw new DomainException($"Payment request '{id}' not found.");
 
+        var currentUserId = _currentUserService.UserId ?? throw new UnauthorizedAccessException();
+        if (_currentUserService.Role != nameof(UserRole.Admin) && payment.UserId != currentUserId)
+        {
+            throw new UnauthorizedAccessException("You can only edit your own payment requests.");
+        }
+
         if (payment.Version != request.Version)
         {
             throw new ConcurrencyConflictException(
@@ -169,6 +191,7 @@ public class PaymentService : IPaymentService
         }
 
         var description = ValidateAndNormalizeDescription(request.Description);
+        await ValidatePaymentReferencesAsync(payment.TenantId, request.SiteId, request.CategoryId, null, ct);
 
         payment.Title = request.Title.Trim();
         payment.Description = description;
@@ -209,7 +232,29 @@ public class PaymentService : IPaymentService
     public async Task<PaymentResponseDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         var payment = await _paymentRepository.GetByIdWithAuditLogsAsync(id, ct);
-        return payment == null ? null : MapToDto(payment);
+        if (payment == null) return null;
+
+        var role = _currentUserService.Role;
+        if (role == nameof(UserRole.Admin)) return MapToDto(payment);
+
+        if (role == nameof(UserRole.Accountant))
+        {
+            var currentYear = DateTime.UtcNow.Year;
+            var inDefaultPeriod = payment.ExpenseYear == currentYear || payment.ExpenseYear == 2026;
+            var hasApprovedPeriodAccess = !inDefaultPeriod && _context != null && _currentUserService.UserId.HasValue &&
+                await _context.PeriodAccessRequests.AnyAsync(r =>
+                    r.RequestedByUserId == _currentUserService.UserId.Value &&
+                    r.TargetYear == payment.ExpenseYear && r.Status == "Approved", ct);
+            return inDefaultPeriod || hasApprovedPeriodAccess ? MapToDto(payment) : null;
+        }
+
+        if ((role == nameof(UserRole.Supervisor) || role == nameof(UserRole.OfficeWorker)) &&
+            _currentUserService.UserId == payment.UserId)
+        {
+            return MapToDto(payment);
+        }
+
+        return null;
     }
 
     public async Task<PagedPaymentsResponseDto> GetListAsync(PaymentFilterQuery query, CancellationToken ct = default)
@@ -314,6 +359,8 @@ public class PaymentService : IPaymentService
         var adminUserId = _currentUserService.UserId ?? Guid.Empty;
         var adminUserName = _currentUserService.FullName ?? "Administrator";
 
+        await ValidatePaymentReferencesAsync(payment.TenantId, request.OverrideSiteId, request.OverrideCategoryId, null, ct);
+
         // Multi-Admin Peer Approval Rule: An Admin cannot self-approve their own request
         if (payment.UserId == adminUserId && adminUserId != Guid.Empty)
         {
@@ -414,6 +461,48 @@ public class PaymentService : IPaymentService
         }
 
         return normalized;
+    }
+
+    private async Task ValidatePaymentReferencesAsync(
+        Guid tenantId,
+        Guid? siteId,
+        Guid? categoryId,
+        Guid? labourerId,
+        CancellationToken ct)
+    {
+        if (_context == null)
+        {
+            if (siteId.HasValue || categoryId.HasValue || labourerId.HasValue)
+            {
+                throw new DomainException("Payment reference validation is unavailable.");
+            }
+            return;
+        }
+
+        if (siteId.HasValue && !await _context.Sites.AnyAsync(s => s.Id == siteId.Value && s.TenantId == tenantId, ct))
+        {
+            throw new DomainException("The selected site was not found in your organization.");
+        }
+
+        if (categoryId.HasValue && !await _context.Categories.AnyAsync(c => c.Id == categoryId.Value && c.TenantId == tenantId, ct))
+        {
+            throw new DomainException("The selected category was not found in your organization.");
+        }
+
+        if (labourerId.HasValue)
+        {
+            var labourer = await _context.Labourers.FirstOrDefaultAsync(
+                l => l.Id == labourerId.Value && l.TenantId == tenantId && l.IsActive,
+                ct);
+            if (labourer == null)
+            {
+                throw new DomainException("The selected labourer was not found in your organization.");
+            }
+            if (_currentUserService.Role == nameof(UserRole.Supervisor) && labourer.SupervisorId != _currentUserService.UserId)
+            {
+                throw new UnauthorizedAccessException("Supervisors can only select their own labourers.");
+            }
+        }
     }
 
     private static PaymentResponseDto MapToDto(PaymentRequest p) => PaymentMapper.MapToDto(p);

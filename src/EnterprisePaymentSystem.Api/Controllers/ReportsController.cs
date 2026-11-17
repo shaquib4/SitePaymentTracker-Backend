@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using EnterprisePaymentSystem.Application.DTOs;
 using EnterprisePaymentSystem.Application.Interfaces;
 using EnterprisePaymentSystem.Domain.Entities;
@@ -13,6 +11,7 @@ namespace EnterprisePaymentSystem.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = "Admin")]
 public class ReportsController : ControllerBase
 {
     private readonly IBackgroundExportQueue _queue;
@@ -90,7 +89,7 @@ public class ReportsController : ControllerBase
     public ActionResult<ExportJobStatusResponse> GetStatus(string jobId)
     {
         var status = _queue.GetJobStatus(jobId);
-        if (status == null)
+        if (status == null || status.TenantId != _currentUserService.TenantId)
         {
             return NotFound(new ProblemDetails
             {
@@ -107,9 +106,15 @@ public class ReportsController : ControllerBase
     /// Streams generated Excel report file.
     /// </summary>
     [HttpGet("download/{jobId}")]
-    [AllowAnonymous]
     public IActionResult DownloadReport(string jobId)
     {
+        if (!Guid.TryParseExact(jobId, "N", out _) ||
+            _queue.GetJobStatus(jobId) is not { } status ||
+            status.TenantId != _currentUserService.TenantId)
+        {
+            return NotFound(new ProblemDetails { Title = "Report not found", Status = StatusCodes.Status404NotFound });
+        }
+
         var filePath = Path.Combine(_storageDirectory, $"{jobId}.xlsx");
         if (!System.IO.File.Exists(filePath))
         {
@@ -230,7 +235,7 @@ public class ReportsController : ControllerBase
             EmployeeName = employeeName,
             SearchFilter = string.IsNullOrWhiteSpace(request.Search) ? null : request.Search.Trim(),
             Status = AuditReportStatus.Queued,
-            DownloadToken = GenerateSecureToken(),
+            DownloadToken = string.Empty,
             QueuedAtUtc = DateTime.UtcNow
         };
 
@@ -297,7 +302,7 @@ public class ReportsController : ControllerBase
         auditJob.ErrorMessage = null;
         auditJob.EmailDispatched = false;
         auditJob.EmailDeliveryNote = null;
-        auditJob.DownloadToken = GenerateSecureToken();
+        auditJob.DownloadToken = string.Empty;
         auditJob.QueuedAtUtc = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(ct);
@@ -370,11 +375,10 @@ public class ReportsController : ControllerBase
     /// from the database immediately after serving while preserving filename, date range, and filter metadata for regeneration.
     /// </summary>
     [HttpGet("admin-files/{jobId:guid}/download/{format}")]
-    [AllowAnonymous]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DownloadAdminAuditFile(
         Guid jobId,
         string format,
-        [FromQuery] string? token = null,
         CancellationToken ct = default)
     {
         SetNoCacheHeaders();
@@ -391,16 +395,14 @@ public class ReportsController : ControllerBase
         }
 
         // Load only metadata + the single requested format binary
+        var tenantId = _currentUserService.TenantId ?? throw new UnauthorizedAccessException();
         var job = await _context.AuditReportJobs
-            .IgnoreQueryFilters()
             .AsNoTracking()
-            .Where(j => j.Id == jobId)
+            .Where(j => j.Id == jobId && j.TenantId == tenantId)
             .Select(j => new
             {
                 j.Id,
-                j.TenantId,
                 j.Status,
-                j.DownloadToken,
                 j.PdfFileName,
                 j.ExcelFileName,
                 Bytes = normalizedFormat == "pdf" ? j.PdfBytes : j.ExcelBytes
@@ -415,29 +417,6 @@ public class ReportsController : ControllerBase
                 Detail = "The requested audit report job was not found.",
                 Status = StatusCodes.Status404NotFound
             });
-        }
-
-        if (!string.IsNullOrWhiteSpace(token))
-        {
-            var expectedBytes = Encoding.UTF8.GetBytes(job.DownloadToken);
-            var suppliedBytes = Encoding.UTF8.GetBytes(token.Trim());
-            if (expectedBytes.Length == 0 ||
-                expectedBytes.Length != suppliedBytes.Length ||
-                !CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes))
-            {
-                return Forbid();
-            }
-        }
-        else
-        {
-            if (User.Identity?.IsAuthenticated != true)
-            {
-                return Unauthorized();
-            }
-            if (!User.IsInRole("Admin") || _currentUserService.TenantId != job.TenantId)
-            {
-                return Forbid();
-            }
         }
 
         if (job.Status != AuditReportStatus.Completed)
@@ -597,12 +576,6 @@ public class ReportsController : ControllerBase
             await _context.SaveChangesAsync(CancellationToken.None);
         }
     }
-
-    private static string GenerateSecureToken()
-        => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
 
     private static string BuildPeriodLabel(int year, DateOnly? startDate, DateOnly? endDate)
     {

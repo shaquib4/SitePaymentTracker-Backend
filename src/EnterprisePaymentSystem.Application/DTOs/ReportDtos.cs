@@ -61,7 +61,9 @@ public record ExportJobStatusResponse(
     int Year,
     DateTime QueuedAtUtc,
     string? DownloadUrl,
-    string? ErrorMessage
+    string? ErrorMessage,
+    Guid TenantId = default,
+    Guid RequestedByUserId = default
 );
 
 public record RegenerateAuditPackRequest(

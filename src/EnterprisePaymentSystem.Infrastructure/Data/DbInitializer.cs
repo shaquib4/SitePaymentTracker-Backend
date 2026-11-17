@@ -18,7 +18,12 @@ public static class DbInitializer
     public static readonly Guid SiteAId = Guid.Parse("33333333-3333-3333-3333-333333333333");
     public static readonly Guid SiteBId = Guid.Parse("44444444-4444-4444-4444-444444444444");
 
-    public static async Task SeedAsync(ApplicationDbContext context, IPasswordHasher hasher, ILogger logger)
+    public static async Task SeedAsync(
+        ApplicationDbContext context,
+        IPasswordHasher hasher,
+        ILogger logger,
+        bool seedDemoData = true,
+        string? demoPassword = null)
     {
         await context.Database.EnsureCreatedAsync();
 
@@ -72,6 +77,18 @@ public static class DbInitializer
                 """);
         }
 
+        if (!seedDemoData)
+        {
+            logger.LogInformation("Demo account and sample data seeding is disabled outside Development.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(demoPassword) || demoPassword.Length < 16)
+        {
+            logger.LogInformation("Demo account seeding is disabled. Set Seed:DemoPassword to a unique 16-character development-only password to seed local demo data.");
+            return;
+        }
+
         if (await context.Tenants.IgnoreQueryFilters().AnyAsync())
         {
             // Ensure OfficeWorker user exists in Khan Enterprises even if already seeded
@@ -82,7 +99,7 @@ public static class DbInitializer
                              ?? await context.Tenants.IgnoreQueryFilters().FirstOrDefaultAsync();
                 if (tenant != null)
                 {
-                    var pwdHash = hasher.HashPassword("Password123!");
+                    var pwdHash = hasher.HashPassword(demoPassword);
                     var officeWorker = new User
                     {
                         Id = Guid.NewGuid(),
@@ -257,7 +274,7 @@ public static class DbInitializer
         context.Sites.AddRange(siteA, siteB);
 
         // 4. Users (Admin, Accountant, Supervisor) with 6-digit IDs and Phone numbers
-        var defaultPasswordHash = hasher.HashPassword("Password123!");
+        var defaultPasswordHash = hasher.HashPassword(demoPassword);
 
         var adminUser = new User
         {

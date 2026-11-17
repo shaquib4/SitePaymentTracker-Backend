@@ -33,6 +33,7 @@ public class PaymentsController : ControllerBase
     /// Accountants are restricted to the current active calendar year only.
     /// </summary>
     [HttpGet]
+    [Authorize(Roles = "Admin,Accountant,Supervisor,OfficeWorker")]
     public async Task<ActionResult<PagedPaymentsResponseDto>> GetList(
         [FromQuery] PaymentFilterQuery query,
         CancellationToken ct)
@@ -63,6 +64,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [Authorize(Roles = "Admin,Accountant,Supervisor,OfficeWorker")]
     public async Task<ActionResult<PaymentResponseDto>> GetById(Guid id, CancellationToken ct)
     {
         var result = await _paymentService.GetByIdAsync(id, ct);
@@ -83,6 +85,7 @@ public class PaymentsController : ControllerBase
     /// Submits a standard expense claim (material, equipment, etc.)
     /// </summary>
     [HttpPost]
+    [Authorize(Roles = "Admin,Accountant,Supervisor,OfficeWorker")]
     public async Task<ActionResult<PaymentResponseDto>> Create(
         [FromBody] CreatePaymentRequest request,
         CancellationToken ct)
@@ -121,6 +124,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Admin,Accountant,Supervisor,OfficeWorker")]
     public async Task<ActionResult<PaymentResponseDto>> Update(
         Guid id,
         [FromBody] UpdatePaymentRequest request,

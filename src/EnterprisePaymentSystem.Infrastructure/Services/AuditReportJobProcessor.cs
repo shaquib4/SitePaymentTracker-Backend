@@ -128,13 +128,7 @@ public class AuditReportJobProcessor : IAuditReportJobProcessor
             entity.Status = AuditReportStatus.Completed;
             entity.CompletedAtUtc = DateTime.UtcNow;
 
-            var apiBase = (job.BaseApiUrl ?? _configuration["Email:PublicApiBaseUrl"] ?? _configuration["PUBLIC_API_BASE_URL"] ?? "").TrimEnd('/');
             var frontendBase = (job.FrontendUrl ?? _configuration["Email:FrontendUrl"] ?? _configuration["FRONTEND_URL"] ?? "https://site-payment-tracker-frontend.vercel.app").TrimEnd('/');
-            var tokenQuery = Uri.EscapeDataString(entity.DownloadToken);
-
-            var pdfUrl = $"{apiBase}/api/reports/admin-files/{entity.Id}/download/pdf?token={tokenQuery}";
-            var excelUrl = $"{apiBase}/api/reports/admin-files/{entity.Id}/download/xlsx?token={tokenQuery}";
-
             var emailResult = await _emailService.SendAuditReportReadyEmailAsync(
                 new AuditEmailNotification(
                     RecipientEmail: entity.RequestedByEmail,
@@ -146,8 +140,6 @@ public class AuditReportJobProcessor : IAuditReportJobProcessor
                     TotalRecords: entity.TotalRecords,
                     TotalRequestedAmount: entity.TotalRequestedAmount,
                     TotalApprovedAmount: entity.TotalApprovedAmount,
-                    PdfDownloadUrl: pdfUrl,
-                    ExcelDownloadUrl: excelUrl,
                     AuditFilesPortalUrl: frontendBase
                 ),
                 ct);

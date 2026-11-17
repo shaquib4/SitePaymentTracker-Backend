@@ -36,15 +36,6 @@ public class CurrentUserService : ICurrentUserService
                 return id;
             }
 
-            // Fallback for dev / integration headers
-            if (_httpContextAccessor.HttpContext?.Request.Headers.TryGetValue("X-Tenant-Id", out var headerVal) == true)
-            {
-                if (Guid.TryParse(headerVal.FirstOrDefault(), out var headerId))
-                {
-                    return headerId;
-                }
-            }
-
             return null;
         }
     }

@@ -47,6 +47,14 @@ public class UsersController : ControllerBase
         string Department
     );
 
+    public record ResetPasswordResponse(
+        Guid UserId,
+        string FullName,
+        string? Email,
+        string SixDigitUserId,
+        string TemporaryPassword
+    );
+
     public record UserListItemDto(
         Guid Id,
         string FullName,
@@ -218,7 +226,7 @@ public class UsersController : ControllerBase
         if (normalizedEmail != null)
         {
             var exists = await _context.Users.IgnoreQueryFilters()
-                .AnyAsync(u => u.TenantId == tenantId && u.Email == normalizedEmail, ct);
+                .AnyAsync(u => u.Email == normalizedEmail, ct);
             if (exists)
             {
                 return BadRequest(new ProblemDetails
@@ -235,7 +243,7 @@ public class UsersController : ControllerBase
         do
         {
             sixDigitId = RandomNumberGenerator.GetInt32(100000, 1_000_000).ToString();
-        } while (await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.TenantId == tenantId && u.SixDigitUserId == sixDigitId, ct));
+        } while (await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.SixDigitUserId == sixDigitId, ct));
 
         // Generate a one-time high-entropy temporary password (18 random bytes).
         var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
@@ -261,6 +269,9 @@ public class UsersController : ControllerBase
         _context.Users.Add(newUser);
         await _context.SaveChangesAsync(ct);
 
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+        Response.Headers.Pragma = "no-cache";
+
         return Ok(new GeneratedUserResponse(
             newUser.Id,
             newUser.FullName,
@@ -271,6 +282,34 @@ public class UsersController : ControllerBase
             newUser.Role,
             newUser.Department
         ));
+    }
+
+    /// <summary>
+    /// Admin resets a user's password and receives a temporary credential once to share out of band.
+    /// </summary>
+    [HttpPost("{id:guid}/reset-password")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<ResetPasswordResponse>> ResetPassword(Guid id, CancellationToken ct)
+    {
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user == null) return NotFound();
+
+        var temporaryPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        user.PasswordHash = _passwordHasher.HashPassword(temporaryPassword);
+        await _context.SaveChangesAsync(ct);
+
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, max-age=0";
+        Response.Headers.Pragma = "no-cache";
+
+        return Ok(new ResetPasswordResponse(
+            user.Id,
+            user.FullName,
+            user.Email,
+            user.SixDigitUserId,
+            temporaryPassword));
     }
 
     [HttpPut("{id:guid}/deactivate")]

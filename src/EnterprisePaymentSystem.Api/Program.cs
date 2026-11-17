@@ -426,6 +426,16 @@ try
             logger,
             seedDemoData: app.Environment.IsDevelopment(),
             demoPassword: builder.Configuration["Seed:DemoPassword"]);
+        await DbInitializer.BootstrapAdminAsync(
+            context,
+            hasher,
+            logger,
+            enabled: builder.Configuration.GetValue<bool>("BootstrapAdmin:Enabled"),
+            email: builder.Configuration["BootstrapAdmin:Email"],
+            password: builder.Configuration["BootstrapAdmin:Password"],
+            tenantIdValue: builder.Configuration["BootstrapAdmin:TenantId"],
+            fullName: builder.Configuration["BootstrapAdmin:FullName"],
+            phoneNumber: builder.Configuration["BootstrapAdmin:PhoneNumber"]);
     }
 
     Log.Information("Host configured successfully. Running application on configured ports...");

@@ -3,6 +3,7 @@ using EnterprisePaymentSystem.Domain.Entities;
 using EnterprisePaymentSystem.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
 
 namespace EnterprisePaymentSystem.Infrastructure.Data;
 
@@ -442,5 +443,107 @@ public static class DbInitializer
 
         await context.SaveChangesAsync();
         logger.LogInformation("Database successfully seeded for Construction Payment Tracking!");
+    }
+
+    public static async Task BootstrapAdminAsync(
+        ApplicationDbContext context,
+        IPasswordHasher hasher,
+        ILogger logger,
+        bool enabled,
+        string? email,
+        string? password,
+        string? tenantIdValue,
+        string? fullName,
+        string? phoneNumber,
+        CancellationToken ct = default)
+    {
+        if (!enabled) return;
+
+        var normalizedEmail = email?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedEmail) || string.IsNullOrWhiteSpace(password) || password.Length < 16)
+        {
+            throw new InvalidOperationException(
+                "BootstrapAdmin is enabled but requires BootstrapAdmin:Email and a BootstrapAdmin:Password of at least 16 characters.");
+        }
+
+        var emailMatches = await context.Users.IgnoreQueryFilters()
+            .Where(u => u.Email != null && u.Email.ToLower() == normalizedEmail)
+            .Take(2)
+            .ToListAsync(ct);
+        if (emailMatches.Count > 1)
+        {
+            throw new InvalidOperationException("BootstrapAdmin email is already assigned ambiguously across tenants.");
+        }
+
+        Guid tenantId;
+        if (!string.IsNullOrWhiteSpace(tenantIdValue))
+        {
+            if (!Guid.TryParse(tenantIdValue, out tenantId) ||
+                !await context.Tenants.IgnoreQueryFilters().AnyAsync(t => t.Id == tenantId && t.IsActive, ct))
+            {
+                throw new InvalidOperationException("BootstrapAdmin:TenantId must identify an active tenant.");
+            }
+        }
+        else if (emailMatches.SingleOrDefault() is { } existingAccount)
+        {
+            tenantId = existingAccount.TenantId;
+            if (!await context.Tenants.IgnoreQueryFilters().AnyAsync(t => t.Id == tenantId && t.IsActive, ct))
+            {
+                throw new InvalidOperationException("The tenant for the BootstrapAdmin email is inactive or missing.");
+            }
+        }
+        else
+        {
+            var activeTenantIds = await context.Tenants.IgnoreQueryFilters()
+                .Where(t => t.IsActive)
+                .Select(t => t.Id)
+                .Take(2)
+                .ToListAsync(ct);
+            if (activeTenantIds.Count != 1)
+            {
+                throw new InvalidOperationException(
+                    "BootstrapAdmin requires BootstrapAdmin:TenantId when the database does not contain exactly one active tenant.");
+            }
+
+            tenantId = activeTenantIds[0];
+        }
+
+        if (emailMatches.Any(u => u.TenantId != tenantId))
+        {
+            throw new InvalidOperationException("BootstrapAdmin email is assigned to a different tenant than BootstrapAdmin:TenantId.");
+        }
+
+        var account = emailMatches.SingleOrDefault();
+        if (account == null)
+        {
+            string sixDigitUserId;
+            do
+            {
+                sixDigitUserId = RandomNumberGenerator.GetInt32(100000, 1_000_000).ToString();
+            } while (await context.Users.IgnoreQueryFilters()
+                         .AnyAsync(u => u.SixDigitUserId == sixDigitUserId, ct));
+
+            account = new User
+            {
+                TenantId = tenantId,
+                Email = normalizedEmail,
+                FullName = string.IsNullOrWhiteSpace(fullName) ? "Primary Administrator" : fullName.Trim(),
+                PhoneNumber = string.IsNullOrWhiteSpace(phoneNumber) ? "Not provided" : phoneNumber.Trim(),
+                SixDigitUserId = sixDigitUserId,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            context.Users.Add(account);
+        }
+
+        account.PasswordHash = hasher.HashPassword(password);
+        account.Role = UserRole.Admin;
+        account.IsActive = true;
+        if (!string.IsNullOrWhiteSpace(fullName)) account.FullName = fullName.Trim();
+        if (!string.IsNullOrWhiteSpace(phoneNumber)) account.PhoneNumber = phoneNumber.Trim();
+
+        await context.SaveChangesAsync(ct);
+        logger.LogWarning(
+            "Bootstrap Admin credentials were applied for tenant {TenantId}. Remove BootstrapAdmin settings from the service environment now.",
+            tenantId);
     }
 }

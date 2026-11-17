@@ -68,9 +68,13 @@ try
     // ==============================================================================
     // 2. EXPLICIT DATABASE CONTEXT CONFIGURATION (Supports Local & Render Cloud DB)
     // ==============================================================================
-    static string NormalizeSupabaseConnectionString(string connectionStringOrUrl)
+    static string NormalizeSupabaseConnectionString(string connectionStringOrUrl, string? rootCertificatePath)
     {
         string cs = connectionStringOrUrl.Trim();
+        if (!string.IsNullOrWhiteSpace(rootCertificatePath) && !File.Exists(rootCertificatePath))
+        {
+            throw new InvalidOperationException("The PostgreSQL root CA certificate path configured by PGSSLROOTCERT does not exist.");
+        }
 
         if (cs.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
             cs.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
@@ -82,7 +86,7 @@ try
             var database = uri.AbsolutePath.TrimStart('/');
             var port = uri.Port > 0 ? uri.Port : 5432;
 
-            cs = $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=VerifyFull;Trust Server Certificate=false;";
+            cs = $"Host={uri.Host};Port={port};Database={database};Username={username};Password={password};SSL Mode=VerifyFull;";
         }
 
         try
@@ -110,6 +114,10 @@ try
 
             // Require encryption and validate the server certificate for every PostgreSQL connection.
             csBuilder.SslMode = Npgsql.SslMode.VerifyFull;
+            if (!string.IsNullOrWhiteSpace(rootCertificatePath))
+            {
+                csBuilder.RootCertificate = rootCertificatePath;
+            }
             return csBuilder.ConnectionString;
         }
         catch
@@ -121,9 +129,10 @@ try
     var pgConnectionRaw = builder.Configuration.GetConnectionString("PostgreSqlConnection")
                           ?? builder.Configuration.GetConnectionString("DefaultConnection")
                           ?? Environment.GetEnvironmentVariable("DATABASE_URL");
+    var pgRootCertificatePath = builder.Configuration["PGSSLROOTCERT"];
 
     var pgConnection = !string.IsNullOrWhiteSpace(pgConnectionRaw)
-        ? NormalizeSupabaseConnectionString(pgConnectionRaw)
+        ? NormalizeSupabaseConnectionString(pgConnectionRaw, pgRootCertificatePath)
         : null;
 
     var usePostgres = builder.Configuration.GetValue<bool>("Database:UsePostgres")

@@ -58,7 +58,7 @@ public class PaymentService : IPaymentService
             RequestedAmount = request.Amount,
             Amount = request.Amount,
             Currency = request.Currency.ToUpperInvariant(),
-            Category = request.Category.Trim(),
+            Category = string.IsNullOrWhiteSpace(request.Category) ? "General Materials" : request.Category.Trim(),
             CategoryId = request.CategoryId,
             SiteId = request.SiteId,
             LabourerId = request.LabourerId,

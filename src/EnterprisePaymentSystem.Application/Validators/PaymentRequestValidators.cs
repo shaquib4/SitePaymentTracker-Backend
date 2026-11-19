@@ -24,7 +24,7 @@ public class CreatePaymentRequestValidator : AbstractValidator<CreatePaymentRequ
             .Length(3).WithMessage("Currency must be a 3-letter ISO code (e.g., INR, USD).");
 
         RuleFor(x => x.Category)
-            .NotEmpty().WithMessage("Category is required.");
+            .MaximumLength(100).WithMessage("Category cannot exceed 100 characters.");
 
         RuleFor(x => x.ExpenseYear)
             .InclusiveBetween(2000, 2100).WithMessage("Expense year must be valid.");

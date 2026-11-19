@@ -181,6 +181,16 @@ Do not store or publish demo passwords, employee login IDs, or personal contact 
 - **Email Notification Service (`EmailService.cs`)**: Supports Resend HTTP API (`Email:ResendApiKey` / `RESEND_API_KEY`) and `MailKit` SMTP supporting both port `465` SSL and `587` STARTTLS (`Email:SmtpHost` / `SMTP_HOST`, `SmtpUser`, `SmtpPassword`), and honestly sets `EmailDispatched = false` when no server mail provider is configured.
 - **Frontend Audit UI (`AuditFilesPanel.tsx`, `useAdminAuditReports.ts`, `AdminDashboard.tsx`)**: Strictly gated to `user?.role === 'Admin'`, adds an **Employee** filter dropdown beside **Status** on Master Payment Ledger (passing `employeeId` to PDF+Excel export), places **`Breakdown PDF + Excel`** beside Breakdown chart headers, displays live mail delivery configuration status & Gmail/Resend env tips, immediately updates React Query cache + clears download buttons to `PDF Deleted (DB)` / `Excel Deleted (DB)` (`Cleared from DB (Metadata Saved)` badge) right alongside **Regenerate**, and auto-polls running jobs every `2.5s`.
 
+### 4.9. Admin Full-Lifecycle Rejection Engine & Supervisor Claim Flexibility (v3.9)
+- **Admin Full-Lifecycle Rejection Engine**:
+  - **In-Modal Review Rejection (`ApproveExpenseModal.tsx`)**: Rejection option added directly into the "Review, Edit & Approve Expense" modal. Admins can click `Reject Claim`, enter a mandatory audit rejection reason, and confirm rejection without leaving the modal.
+  - **Site Expense Ledger Rejection (`SiteExpensesModal.tsx`)**: The dedicated project site expense view previously lacked rejection actions. Full rejection support was added to both desktop table and mobile card views for `Pending`, `InfoRequested`, and `Approved` (pre-disbursement revocation) claims, accompanied by a dedicated Rejection Reason dialog modal.
+  - **Admin Master Ledger Rejection (`AdminDashboard.tsx`)**: Added `Reject` button for `Approved` claims in both desktop table and mobile cards so Admins can revoke approved claims prior to disbursement.
+- **Supervisor Workflow Enhancements & Category Flexibility**:
+  - **Labour Wage Request Dates**: Start Date and End Date inputs stacked vertically with responsive spacing instead of cramped 2-column layout.
+  - **Supervisor Material Request Category Flexibility**: Material requests now allow supervisors to skip selecting or typing a category. Both frontend and backend (`PaymentRequestValidators.cs` and `PaymentService.cs`) treat category as optional and automatically default empty entries to `"General Materials"`. Start and End dates are stacked vertically with comfortable touch-friendly heights (`min-h-[42px]`).
+  - **Initiate Payment Modal Layout (`InitiatePaymentModal.tsx`)**: Category made explicitly optional (`-- Skip / Default Category (General) --`) and date pickers stacked vertically.
+
 ---
 
 ## 5. Repository Structure & Key Files
